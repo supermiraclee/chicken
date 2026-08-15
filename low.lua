@@ -68,7 +68,7 @@ local EGG_TYPES = {
 }
 
 local AUTO_EGG_DELAY = 0.225
-local APP_VERSION = "v4"
+local APP_VERSION = "v2.5.7.3"
 
 local THEME_NAMES = {
 	"Monochrome",
@@ -5169,17 +5169,124 @@ local function floorFromBattleGui()
 	return nil
 end
 
+local function getArenaLocalOwnershipState(arena)
+	if not arena then
+		return nil
+	end
+
+	local localUserId = player.UserId
+	local localName = string.lower(player.Name)
+
+	local numericOwnerKeys = {
+		owner = true,
+		ownerid = true,
+		owneruserid = true,
+		userid = true,
+		playerid = true,
+		playeruserid = true,
+	}
+
+	local nameOwnerKeys = {
+		ownername = true,
+		playername = true,
+		username = true,
+	}
+
+	-- Inspect Arena and its immediate parent chain for ownership metadata.
+	local current = arena
+
+	for _ = 1, 3 do
+		if not current then
+			break
+		end
+
+		for key, value in pairs(current:GetAttributes()) do
+			local normalized =
+				normalizeTowerKey(key)
+
+			if numericOwnerKeys[normalized] then
+				local numeric = tonumber(value)
+
+				if numeric then
+					return numeric == localUserId
+				end
+
+				if type(value) == "string" then
+					local lowered =
+						string.lower(value)
+
+					if lowered == localName then
+						return true
+					end
+				end
+
+			elseif nameOwnerKeys[normalized]
+				and type(value) == "string" then
+
+				return string.lower(value) == localName
+			end
+		end
+
+		current = current.Parent
+	end
+
+	-- Inspect direct metadata Value objects only.
+	for _, object in ipairs(arena:GetChildren()) do
+		local normalized =
+			normalizeTowerKey(object.Name)
+
+		if numericOwnerKeys[normalized] then
+			if object:IsA("IntValue")
+				or object:IsA("NumberValue") then
+
+				return tonumber(object.Value) == localUserId
+
+			elseif object:IsA("StringValue") then
+				local numeric =
+					tonumber(object.Value)
+
+				if numeric then
+					return numeric == localUserId
+				end
+
+				return string.lower(object.Value) == localName
+
+			elseif object:IsA("ObjectValue") then
+				return object.Value == player
+			end
+
+		elseif nameOwnerKeys[normalized]
+			and object:IsA("StringValue") then
+
+			return string.lower(object.Value) == localName
+		end
+	end
+
+	-- Some Arena models may include the owner name directly.
+	local arenaName =
+		string.lower(tostring(arena.Name or ""))
+
+	if arenaName == localName
+		or string.find(
+			arenaName,
+			localName,
+			1,
+			true
+		) then
+
+		return true
+	end
+
+	-- nil = ownership metadata unavailable.
+	return nil
+end
+
 local function floorFromWorkspaceTowerSign()
 	local arenas = workspace:FindFirstChild("Arenas")
 
 	if not arenas then
 		return nil
 	end
-
-	local character = player.Character
-	local root =
-		character
-		and character:FindFirstChild("HumanoidRootPart")
 
 	local candidates = {}
 
@@ -5203,12 +5310,6 @@ local function floorFromWorkspaceTowerSign()
 						and floorLabel:IsA("TextLabel")
 						and floorLabel.Visible then
 
-						-- TowerSign.show(p1, p2, p3) sets:
-						-- Floor.Text =
-						-- Locale.get("ui.tower.floor", {n = p2})
-						--
-						-- The locale wording can vary, therefore extract
-						-- the numeric component instead of matching "Floor".
 						local floorNumber =
 							tostring(floorLabel.Text or "")
 								:match("(%d+)")
@@ -5219,21 +5320,20 @@ local function floorFromWorkspaceTowerSign()
 							)
 
 						if floor then
-							local distance = math.huge
+							local ownership =
+								getArenaLocalOwnershipState(
+									arena
+								)
 
-							if root then
-								distance =
-									(
-										root.Position
-										- floorPart.Position
-									).Magnitude
+							-- Explicit mismatch means this sign belongs
+							-- to another player. Ignore it.
+							if ownership ~= false then
+								table.insert(candidates, {
+									floor = floor,
+									arena = arena.Name,
+									owned = ownership == true,
+								})
 							end
-
-							table.insert(candidates, {
-								floor = floor,
-								distance = distance,
-								arena = arena.Name,
-							})
 						end
 					end
 				end
@@ -5245,23 +5345,46 @@ local function floorFromWorkspaceTowerSign()
 		return nil
 	end
 
-	-- Multiple Arena signs can exist for other players.
-	-- The local player's active Tower arena should be the nearest
-	-- one to their character.
-	table.sort(candidates, function(a, b)
-		return a.distance < b.distance
-	end)
+	local ownedCandidates = {}
 
-	local best = candidates[1]
+	for _, candidate in ipairs(candidates) do
+		if candidate.owned then
+			table.insert(
+				ownedCandidates,
+				candidate
+			)
+		end
+	end
 
-	-- If character/root is temporarily unavailable, only trust the
-	-- result when exactly one TowerSign exists.
-	if not root and #candidates > 1 then
+	-- Best case: exactly one sign is proven to belong to LocalPlayer.
+	if #ownedCandidates == 1 then
+		local best = ownedCandidates[1]
+
+		return best.floor,
+			"TowerSign " .. tostring(best.arena)
+	end
+
+	-- More than one explicitly-owned candidate is ambiguous.
+	if #ownedCandidates > 1 then
 		return nil
 	end
 
-	return best.floor,
-		"TowerSign " .. tostring(best.arena)
+	-- If ownership metadata is absent, trust TowerSign only when there is
+	-- exactly one enabled candidate in the whole Arenas folder.
+	--
+	-- Do NOT choose by player-avatar distance: the avatar remains at Coop
+	-- while the chicken fights remotely, so proximity can select someone
+	-- else's Arena.
+	if #candidates == 1 then
+		local best = candidates[1]
+
+		return best.floor,
+			"TowerSign " .. tostring(best.arena)
+	end
+
+	-- Multiple unowned/unknown TowerSigns: never guess.
+	-- Let local battle-state/DataService fallbacks decide instead.
+	return nil
 end
 
 local function floorFromArenaRuntimeState()
@@ -5513,8 +5636,8 @@ local function floorFromExecutorRuntimeTables()
 end
 
 local function getCurrentTowerFloor()
-	-- Highest-confidence source, proven by TowerSign.show(p1, p2, p3):
-	-- p2 is rendered as the current Tower floor in Workspace.Arenas.
+	-- TowerSign.show(p1, p2, p3) proves p2 is the current floor.
+	-- TowerSign is accepted only when Arena ownership is local/unambiguous.
 	local floor, source =
 		floorFromWorkspaceTowerSign()
 
