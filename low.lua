@@ -68,7 +68,7 @@ local EGG_TYPES = {
 }
 
 local AUTO_EGG_DELAY = 0.225
-local APP_VERSION = "v2.6.1"
+local APP_VERSION = "v2.5.2"
 
 local THEME_NAMES = {
 	"Monochrome",
@@ -119,7 +119,6 @@ local Config = {
 	WalkSpeed = 16,
 	WalkSpeedOverride = false,
 
-	LiveActionPanelEnabled = true,
 	Theme = "Monochrome",
 }
 
@@ -277,11 +276,6 @@ local function sanitizeConfig(data)
 
 	if type(data.WalkSpeedOverride) == "boolean" then
 		Config.WalkSpeedOverride = data.WalkSpeedOverride
-	end
-
-	if type(data.LiveActionPanelEnabled) == "boolean" then
-		Config.LiveActionPanelEnabled =
-			data.LiveActionPanelEnabled
 	end
 
 	if type(data.Theme) == "string"
@@ -1179,7 +1173,7 @@ function Library:CreateWindow(options)
 		Name = "SettingsPanel",
 		AnchorPoint = Vector2.new(1, 0),
 		Position = UDim2.new(1, -14, 0, headerHeight + 8),
-		Size = UDim2.fromOffset(250, 376),
+		Size = UDim2.fromOffset(250, 286),
 		BackgroundColor3 = Theme.Surface,
 		BorderSizePixel = 0,
 		Visible = false,
@@ -1200,7 +1194,7 @@ function Library:CreateWindow(options)
 	})
 
 	makeText(settingsPanel, {
-		LayoutOrder = 4,
+		LayoutOrder = 2,
 		Size = UDim2.new(1, 0, 0, 20),
 		Text = "Theme",
 		Font = Enum.Font.GothamMedium,
@@ -1210,7 +1204,7 @@ function Library:CreateWindow(options)
 	})
 
 	local themeList = create("Frame", {
-		LayoutOrder = 5,
+		LayoutOrder = 3,
 		Size = UDim2.new(1, 0, 0, 210),
 		BackgroundTransparency = 1,
 		ZIndex = 71,
@@ -1228,123 +1222,6 @@ function Library:CreateWindow(options)
 		SortOrder = Enum.SortOrder.LayoutOrder,
 		Parent = settingsPanel,
 	})
-
-	makeText(settingsPanel, {
-		LayoutOrder = 2,
-		Size = UDim2.new(1, 0, 0, 20),
-		Text = "Interface",
-		Font = Enum.Font.GothamMedium,
-		TextSize = 12,
-		TextColor3 = Theme.TextMuted,
-		ZIndex = 71,
-	})
-
-	local liveActionSettingButton = makeButton(settingsPanel, {
-		Name = "LiveActionSetting",
-		LayoutOrder = 3,
-		Size = UDim2.new(1, 0, 0, 44),
-		BackgroundColor3 = Theme.Control,
-		Text = "",
-		ZIndex = 72,
-	})
-	corner(liveActionSettingButton, 11)
-
-	local liveActionSettingLabel = makeText(
-		liveActionSettingButton,
-		{
-			Position = UDim2.fromOffset(11, 0),
-			Size = UDim2.new(1, -74, 1, 0),
-			Text = "Live Action Panel",
-			Font = Enum.Font.GothamSemibold,
-			TextSize = 12,
-			TextColor3 = Theme.Text,
-			ZIndex = 73,
-		}
-	)
-
-	local liveActionToggleTrack = create("Frame", {
-		Name = "ToggleTrack",
-		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -10, 0.5, 0),
-		Size = UDim2.fromOffset(42, 24),
-		BackgroundColor3 = Theme.ControlActive,
-		BorderSizePixel = 0,
-		ZIndex = 73,
-		Parent = liveActionSettingButton,
-	})
-	corner(liveActionToggleTrack, 12)
-
-	local liveActionToggleKnob = create("Frame", {
-		Name = "ToggleKnob",
-		AnchorPoint = Vector2.new(0, 0.5),
-		Position = UDim2.new(0, 3, 0.5, 0),
-		Size = UDim2.fromOffset(18, 18),
-		BackgroundColor3 = Theme.Text,
-		BorderSizePixel = 0,
-		ZIndex = 74,
-		Parent = liveActionToggleTrack,
-	})
-	corner(liveActionToggleKnob, 9)
-
-	local function refreshLiveActionSetting(animate)
-		local enabled =
-			Config.LiveActionPanelEnabled ~= false
-
-		liveActionSettingLabel.TextColor3 =
-			enabled and Theme.Text or Theme.TextMuted
-
-		local trackColor =
-			enabled and Theme.Accent or Theme.ControlActive
-
-		local knobPosition =
-			enabled
-				and UDim2.new(1, -21, 0.5, 0)
-				or UDim2.new(0, 3, 0.5, 0)
-
-		if animate then
-			tween(liveActionToggleTrack, 0.14, {
-				BackgroundColor3 = trackColor,
-			})
-
-			tween(liveActionToggleKnob, 0.14, {
-				Position = knobPosition,
-			})
-		else
-			liveActionToggleTrack.BackgroundColor3 = trackColor
-			liveActionToggleKnob.Position = knobPosition
-		end
-	end
-
-	local function applyLiveActionSetting(enabled)
-		Config.LiveActionPanelEnabled =
-			enabled == true
-
-		local livePanel =
-			screenGui:FindFirstChild("LiveActionPanel")
-
-		if livePanel then
-			livePanel.Visible =
-				Config.LiveActionPanelEnabled
-		end
-
-		refreshLiveActionSetting(true)
-		queueSaveConfig()
-	end
-
-	bindHoverMotion(liveActionSettingButton, {
-		HoverScale = 1.012,
-		PressScale = 0.988,
-		EnterDuration = 0.12,
-		LeaveDuration = 0.16,
-	})
-
-	liveActionSettingButton.MouseButton1Click:Connect(function()
-		applyLiveActionSetting(
-			not Config.LiveActionPanelEnabled
-		)
-	end)
-
-	refreshLiveActionSetting(false)
 
 	local themeButtons = {}
 	local settingsOpen = false
@@ -1368,7 +1245,6 @@ function Library:CreateWindow(options)
 		Config.Theme = name
 		queueSaveConfig()
 		refreshThemeButtons()
-		refreshLiveActionSetting(false)
 	end
 
 	for index, name in ipairs(THEME_NAMES) do
@@ -2989,252 +2865,64 @@ local window = Library:CreateWindow({
 -- Compact, screen-anchored runtime monitor.
 --========================================================
 
-local function buildLiveActionPanel()
+local LiveAction = (function()
 	local root = create("Frame", {
 		Name = "LiveActionPanel",
 		AnchorPoint = Vector2.new(1, 0),
-		Position = UDim2.new(1, -10, 0, 10),
+		Position = UDim2.new(1, -20, 0, 44),
 		Size = UDim2.fromOffset(318, 194),
 		BackgroundColor3 = Theme.Surface,
 		BackgroundTransparency = 0.04,
 		BorderSizePixel = 0,
-		Visible = Config.LiveActionPanelEnabled ~= false,
 		ZIndex = 120,
 		Parent = window.ScreenGui,
 	})
 	corner(root, 20)
 
-	-- Responsive sizing:
-	-- 1920x1080 = 1.00x
-	-- smaller Roblox windows scale the entire panel down,
-	-- larger windows stay restrained so the panel never becomes huge.
-	local panelScale = create("UIScale", {
-		Name = "ResponsiveScale",
-		Scale = 1,
-		Parent = root,
+	-- Soft shadow only; no visible border.
+	local shadow = create("Frame", {
+		Name = "Shadow",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0.5, 0, 0.5, 7),
+		Size = UDim2.new(1, 12, 1, 12),
+		BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+		BackgroundTransparency = 0.58,
+		BorderSizePixel = 0,
+		ZIndex = 119,
+		Parent = window.ScreenGui,
 	})
+	shadow:SetAttribute("ThemeStatic", true)
+	corner(shadow, 24)
 
-	local viewportConnection = nil
-	local cameraConnection = nil
-	local hasCustomPosition = false
-
-	local function getViewport()
-		local camera = workspace.CurrentCamera
-
-		return camera and camera.ViewportSize
-			or Vector2.new(1920, 1080)
+	-- Keep shadow behind the panel while sharing screen-space position.
+	local function syncShadow()
+		if root.Parent and shadow.Parent then
+			shadow.AnchorPoint = root.AnchorPoint
+			shadow.Position = UDim2.new(
+				root.Position.X.Scale,
+				root.Position.X.Offset,
+				root.Position.Y.Scale,
+				root.Position.Y.Offset + 7
+			)
+			shadow.Size = UDim2.new(
+				root.Size.X.Scale,
+				root.Size.X.Offset + 12,
+				root.Size.Y.Scale,
+				root.Size.Y.Offset + 12
+			)
+		end
 	end
-
-	local function clampPanelToViewport()
-		if not root.Parent then
-			return
-		end
-
-		local viewport = getViewport()
-		local size = root.AbsoluteSize
-		local currentTopLeft = root.AbsolutePosition
-
-		local maxX =
-			math.max(0, viewport.X - size.X)
-
-		local maxY =
-			math.max(0, viewport.Y - size.Y)
-
-		local left =
-			math.clamp(
-				currentTopLeft.X,
-				0,
-				maxX
-			)
-
-		local top =
-			math.clamp(
-				currentTopLeft.Y,
-				0,
-				maxY
-			)
-
-		root.Position =
-			UDim2.fromOffset(
-				left + size.X,
-				top
-			)
-	end
-
-	local function updateResponsiveLayout()
-		if not root.Parent then
-			return
-		end
-
-		local viewport = getViewport()
-
-		local scale =
-			math.clamp(
-				math.min(
-					viewport.X / 1920,
-					viewport.Y / 1080
-				),
-				0.68,
-				1.05
-			)
-
-		panelScale.Scale = scale
-
-		if hasCustomPosition then
-			task.defer(clampPanelToViewport)
-			return
-		end
-
-		local edgePadding =
-			math.clamp(
-				math.floor(viewport.X * 0.006),
-				6,
-				14
-			)
-
-		root.Position =
-			UDim2.new(
-				1,
-				-edgePadding,
-				0,
-				edgePadding
-			)
-	end
-
-	local function bindViewport()
-		if viewportConnection then
-			viewportConnection:Disconnect()
-			viewportConnection = nil
-		end
-
-		local camera = workspace.CurrentCamera
-
-		if camera then
-			viewportConnection =
-				camera:GetPropertyChangedSignal(
-					"ViewportSize"
-				):Connect(updateResponsiveLayout)
-		end
-
-		updateResponsiveLayout()
-	end
-
-	cameraConnection =
-		workspace:GetPropertyChangedSignal(
-			"CurrentCamera"
-		):Connect(bindViewport)
-
-	bindViewport()
-
-	root.Destroying:Connect(function()
-		if viewportConnection then
-			viewportConnection:Disconnect()
-			viewportConnection = nil
-		end
-
-		if cameraConnection then
-			cameraConnection:Disconnect()
-			cameraConnection = nil
-		end
-	end)
+	syncShadow()
 
 	local header = create("Frame", {
 		Name = "Header",
 		Size = UDim2.new(1, 0, 0, 44),
 		BackgroundColor3 = Theme.Header,
 		BorderSizePixel = 0,
-		Active = true,
 		ZIndex = 121,
 		Parent = root,
 	})
 	corner(header, 20)
-
-	-- Header exists before any drag event is connected.
-	-- Drag from the LIVE ACTION header.
-	-- The panel is clamped so it cannot disappear outside the viewport.
-	local dragging = false
-	local dragInput = nil
-	local dragStart = nil
-	local startTopLeft = nil
-
-	local function beginLiveActionDrag(input)
-		if input.UserInputType ~= Enum.UserInputType.MouseButton1
-			and input.UserInputType ~= Enum.UserInputType.Touch then
-
-			return
-		end
-
-		dragging = true
-		hasCustomPosition = true
-		dragStart = input.Position
-		startTopLeft = root.AbsolutePosition
-
-		input.Changed:Connect(function()
-			if input.UserInputState == Enum.UserInputState.End then
-				dragging = false
-				dragInput = nil
-			end
-		end)
-	end
-
-	header.InputBegan:Connect(beginLiveActionDrag)
-
-	header.InputChanged:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseMovement
-			or input.UserInputType == Enum.UserInputType.Touch then
-
-			dragInput = input
-		end
-	end)
-
-	UserInputService.InputChanged:Connect(function(input)
-		if not dragging
-			or input ~= dragInput
-			or not dragStart
-			or not startTopLeft then
-
-			return
-		end
-
-		local delta =
-			input.Position - dragStart
-
-		local viewport = getViewport()
-		local size = root.AbsoluteSize
-
-		local left =
-			math.clamp(
-				startTopLeft.X + delta.X,
-				0,
-				math.max(0, viewport.X - size.X)
-			)
-
-		local top =
-			math.clamp(
-				startTopLeft.Y + delta.Y,
-				0,
-				math.max(0, viewport.Y - size.Y)
-			)
-
-		root.Position =
-			UDim2.fromOffset(
-				left + size.X,
-				top
-			)
-	end)
-
-	UserInputService.InputEnded:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1
-			or input.UserInputType == Enum.UserInputType.Touch then
-
-			if dragging then
-				dragging = false
-				dragInput = nil
-				clampPanelToViewport()
-			end
-		end
-	end)
-
 
 	-- Square only header lower corners.
 	create("Frame", {
@@ -3414,6 +3102,7 @@ local function buildLiveActionPanel()
 
 	local api = {
 		Root = root,
+		Shadow = shadow,
 		CurrentFloor = nil,
 		RequiredFloor = nil,
 		TowerBest = nil,
@@ -3554,10 +3243,6 @@ local function buildLiveActionPanel()
 			api.CoopWorkers and Theme.Accent or Theme.TextDim
 	end
 
-	function api:SetVisible(enabled)
-		root.Visible = enabled == true
-	end
-
 	function api:SetAutomation(enabled)
 		api.Automation = enabled == true
 
@@ -3597,90 +3282,11 @@ local function buildLiveActionPanel()
 	end)
 
 	return api
-end
-
-local function makeNoopLiveAction()
-	return {
-		SetAction = function() end,
-		SetFloors = function() end,
-		SetTimeout = function() end,
-		SetLoopDelay = function() end,
-		SetCoopWorkers = function() end,
-		SetAutomation = function() end,
-		SetVisible = function() end,
-	}
-end
-
-local LiveAction = makeNoopLiveAction()
-
-do
-	local ok, result =
-		xpcall(
-			buildLiveActionPanel,
-			function(errorMessage)
-				local message = tostring(errorMessage)
-
-				if debug and debug.traceback then
-					local traceOk, trace =
-						pcall(
-							debug.traceback,
-							message,
-							2
-						)
-
-					if traceOk and trace then
-						message = trace
-					end
-				end
-
-				return message
-			end
-		)
-
-	if ok and type(result) == "table" then
-		LiveAction = result
-
-		window.ScreenGui:SetAttribute(
-			"LiveActionInitOK",
-			true
-		)
-	else
-		-- Optional panel failure must NEVER stop the main GUI.
-		local partial =
-			window.ScreenGui:FindFirstChild(
-				"LiveActionPanel"
-			)
-
-		if partial then
-			partial:Destroy()
-		end
-
-		window.ScreenGui:SetAttribute(
-			"LiveActionInitOK",
-			false
-		)
-
-		window.ScreenGui:SetAttribute(
-			"LiveActionInitError",
-			tostring(result)
-		)
-
-		warn(
-			"[GACF] Live Action init failed; "
-				.. "continuing main GUI: "
-				.. tostring(result)
-		)
-	end
-end
+end)()
 
 --========================================================
 -- APP: TABS
 --========================================================
-
-window.ScreenGui:SetAttribute(
-	"MainTabsConstructionStarted",
-	true
-)
 
 local routineTab = window:AddTab(
 	"Routine",
@@ -3697,10 +3303,6 @@ local utilitiesTab = window:AddTab(
 	""
 )
 
-window.ScreenGui:SetAttribute(
-	"MainTabsConstructionComplete",
-	true
-)
 
 --========================================================
 -- ROUTINE TAB
@@ -3811,53 +3413,11 @@ local function invalidateAutoRebirthWorker()
 end
 
 local function rebirthOnce()
-	-- RebirthController uses:
-	--   Remotes.invoke(Remotes.defs.Rebirth)
-	-- Prefer that exact game API.
-	local coreFolder =
-		ReplicatedStorage:FindFirstChild("Core")
-
-	local coreRemotesModule =
-		coreFolder
-		and coreFolder:FindFirstChild("Remotes")
-
-	if coreRemotesModule
-		and coreRemotesModule:IsA("ModuleScript") then
-
-		local requireOk, coreRemotes =
-			pcall(require, coreRemotesModule)
-
-		if requireOk
-			and type(coreRemotes) == "table"
-			and type(coreRemotes.invoke) == "function"
-			and type(coreRemotes.defs) == "table"
-			and coreRemotes.defs.Rebirth ~= nil then
-
-			local invokeOk, result =
-				pcall(function()
-					return coreRemotes.invoke(
-						coreRemotes.defs.Rebirth
-					)
-				end)
-
-			if invokeOk then
-				if type(result) == "table" then
-					return result.ok == true, result
-				end
-
-				return result ~= false
-					and result ~= nil,
-					result
-			end
-		end
-	end
-
-	-- Compatibility fallback for the raw RemoteFunction.
 	if not Rebirth
 		or not Rebirth.Parent
 		or not Rebirth:IsA("RemoteFunction") then
 
-		return false, "Rebirth remote unavailable"
+		return false, "Rebirth RemoteFunction unavailable"
 	end
 
 	local success, result = pcall(function()
@@ -6870,195 +6430,9 @@ window.AutomationController = (function()
 		return floor
 	end
 
-	-- Exact Rebirth data flow recovered from RebirthController:
-	--
-	--   count = DataController.rebirth().count
-	--   towerBest = DataController.towerBest()
-	--   requirementFloor =
-	--       RebirthBonus.requirementFloor(count)
-	--
-	-- All old detectors remain as fallbacks.
-	local RebirthAuthority = (function()
-		local dataControllerCache = false
-		local rebirthBonusCache = false
-
-		local function getDataController()
-			if dataControllerCache ~= false then
-				return dataControllerCache
-			end
-
-			local playerScripts =
-				player:FindFirstChild("PlayerScripts")
-
-			local core =
-				playerScripts
-				and playerScripts:FindFirstChild("Core")
-
-			local data =
-				core and core:FindFirstChild("Data")
-
-			local moduleScript =
-				data and data:FindFirstChild("DataController")
-
-			local controller =
-				safeRequireAutomation(moduleScript)
-
-			if type(controller) == "table" then
-				dataControllerCache = controller
-				return controller
-			end
-
-			-- Keep false so a later call can retry if PlayerScripts
-			-- was not ready yet.
-			return nil
-		end
-
-		local function getRebirthBonus()
-			if rebirthBonusCache ~= false then
-				return rebirthBonusCache
-			end
-
-			local core =
-				ReplicatedStorage:FindFirstChild("Core")
-
-			local progression =
-				core and core:FindFirstChild("Progression")
-
-			local moduleScript =
-				progression
-				and progression:FindFirstChild("RebirthBonus")
-
-			local rebirthBonus =
-				safeRequireAutomation(moduleScript)
-
-			if type(rebirthBonus) == "table" then
-				rebirthBonusCache = rebirthBonus
-				return rebirthBonus
-			end
-
-			return nil
-		end
-
-		return {
-			GetCount = function()
-				local controller = getDataController()
-
-				if type(controller) ~= "table"
-					or type(controller.rebirth) ~= "function" then
-
-					return nil
-				end
-
-				local ok, state =
-					pcall(controller.rebirth)
-
-				if not ok then
-					return nil
-				end
-
-				if type(state) == "number" then
-					return math.max(
-						0,
-						math.floor(state + 0.5)
-					)
-				end
-
-				if type(state) == "table" then
-					local count = tonumber(state.count)
-
-					if count then
-						return math.max(
-							0,
-							math.floor(count + 0.5)
-						)
-					end
-				end
-
-				return nil
-			end,
-
-			GetTowerBest = function()
-				local controller = getDataController()
-
-				if type(controller) ~= "table"
-					or type(controller.towerBest) ~= "function" then
-
-					return nil
-				end
-
-				local ok, value =
-					pcall(controller.towerBest)
-
-				if not ok then
-					return nil
-				end
-
-				return validFloor(value)
-			end,
-
-			GetRequirementFloor = function(count)
-				count = tonumber(count)
-
-				if count == nil then
-					return nil
-				end
-
-				count =
-					math.max(
-						0,
-						math.floor(count + 0.5)
-					)
-
-				local rebirthBonus = getRebirthBonus()
-
-				if type(rebirthBonus) ~= "table"
-					or type(rebirthBonus.requirementFloor)
-						~= "function" then
-
-					return nil
-				end
-
-				local ok, value =
-					pcall(
-						rebirthBonus.requirementFloor,
-						count
-					)
-
-				if not ok then
-					return nil
-				end
-
-				local floor = tonumber(value)
-
-				if not floor then
-					return nil
-				end
-
-				floor = math.floor(floor + 0.5)
-
-				if floor < 0 or floor > 9999 then
-					return nil
-				end
-
-				return floor
-			end,
-		}
-	end)()
-
 	local function getTowerBestFloor()
-		local authoritative =
-			RebirthAuthority.GetTowerBest()
-
-		if authoritative then
-			return authoritative
-		end
-
 		local towerState = getClientPath({"tower"})
-
-		if type(towerState) ~= "table" then
-			return nil
-		end
-
+		if type(towerState) ~= "table" then return nil end
 		return validFloor(
 			towerState.best
 				or towerState.bestFloor
@@ -7096,13 +6470,6 @@ window.AutomationController = (function()
 	end
 
 	local function getRebirthCount()
-		local authoritative =
-			RebirthAuthority.GetCount()
-
-		if authoritative ~= nil then
-			return authoritative
-		end
-
 		local state = getClientPath({"rebirth"})
 
 		if type(state) == "number" then
@@ -7130,16 +6497,6 @@ window.AutomationController = (function()
 		end
 
 		return rebirthCountFromGui()
-	end
-
-	local function requirementFromRebirthBonus()
-		local count = getRebirthCount()
-
-		if count == nil then
-			return nil
-		end
-
-		return RebirthAuthority.GetRequirementFloor(count)
 	end
 
 	local REQUIREMENT_KEYS = {
@@ -7381,17 +6738,8 @@ window.AutomationController = (function()
 	end
 
 	local function detectRequiredRebirthFloor()
-		-- Priority #1: exact game formula from RebirthController.
-		local floor =
-			requirementFromRebirthBonus()
-			or requirementFromData()
-			or requirementFromAttributes()
-			or requirementFromRebirthGui()
-
-		if floor ~= nil then
-			requiredRebirthFloorCache = floor
-		end
-
+		local floor = requirementFromData() or requirementFromAttributes() or requirementFromRebirthGui()
+		if floor then requiredRebirthFloorCache = floor end
 		return floor or requiredRebirthFloorCache
 	end
 
@@ -7413,8 +6761,8 @@ window.AutomationController = (function()
 
 	local section = routineTab:AddDropdownSection("Automation Cycle", true)
 	section:AddParagraph(
-		"Automation Runtime",
-		"Required Rebirth Floor uses the game's RebirthBonus.requirementFloor(rebirthCount) formula. Current Tower Floor uses TowerSign/battle-state detection."
+		"Uses Auto Tab Settings",
+		"Routine includes a top-right Live Action panel showing the current action, current Tower floor B, required Rebirth floor A, Tower Best, Fight Timeout, Tower Loop Delay, and Coop worker state in real time."
 	)
 	section:AddSlider({
 		Title = "Tower Loop Delay", Min = 1, Max = 200, Step = 1, Default = towerLoopDelay,
@@ -7727,170 +7075,25 @@ window.AutomationController = (function()
 					runtimeRequirementBefore =
 						nil
 
-					-- IMPORTANT:
-					-- requiredFloor / towerBest / currentFloor above are
-					-- snapshots from BEFORE the Rebirth completed. Never
-					-- process FORCE REBIRTH using those stale values.
-					task.wait(AUTOMATION_POLL_DELAY)
-					continue
-
 				elseif rebirthCount ~= nil then
 					runtimeLastRebirthCount =
 						rebirthCount
 				end
 
-				local realRebirthEligible =
-					not rebirthRuntimeCoolingDown
-					and requiredFloor ~= nil
-					and towerBest ~= nil
-					and towerBest >= requiredFloor
-
 				-- -------------------------------------------------
-				-- REAL REBIRTH ELIGIBILITY:
-				-- If Tower Best already meets the dynamic Rebirth
-				-- requirement, Routine must FORCE Rebirth immediately.
-				--
-				-- This has higher priority than current floor logic.
-				-- Even if the rooster is still fighting at floor 1..A,
-				-- we stop the tower run, call it home, then Rebirth.
-				-- -------------------------------------------------
-				if realRebirthEligible then
-
-					if not waitingForRebirth then
-						waitingForRebirth = true
-
-						rebirthCountBeforeSurrender =
-							rebirthCount
-
-						rebirthRequirementBeforeSurrender =
-							requiredFloor
-
-						runtimeRequirementBefore =
-							requiredFloor
-
-						lastRebirthAttemptAt = 0
-						lastCoopOrderAt = 0
-						coopStableSince = nil
-						surrenderRequestedAt = now
-						rebirthAttemptedAfterReturn = false
-						lastDynamicSurrenderAt = 0
-
-						cycleStatus:Set(
-							"TowerBest="
-								.. tostring(towerBest)
-								.. " >= A="
-								.. tostring(requiredFloor)
-								.. " · FORCE REBIRTH",
-							true
-						)
-					end
-
-					if currentFloor then
-						if now - lastDynamicSurrenderAt
-							>= AUTOMATION_DYNAMIC_SURRENDER_DELAY then
-
-							AutoTowerController:SurrenderOnce()
-							AutoTowerController:DeclineOnce()
-							callChickenToCoopOnce()
-
-							lastDynamicSurrenderAt = now
-							lastCoopOrderAt = now
-
-							fightTimeoutStatus:Set(
-								"Bypassed · Best >= Req",
-								true
-							)
-
-							cycleStatus:Set(
-								"TowerBest="
-									.. tostring(towerBest)
-									.. " >= A="
-									.. tostring(requiredFloor)
-									.. " · SURRENDER + COOP",
-								true
-							)
-						end
-
-					else
-						if now - lastCoopOrderAt
-							>= AUTOMATION_COOP_ORDER_DELAY then
-
-							callChickenToCoopOnce()
-							lastCoopOrderAt = now
-						end
-
-						if rebirthUi.needsRoosterHome then
-							coopStableSince = nil
-
-							cycleStatus:Set(
-								"Rebirth ready · rooster not home",
-								false
-							)
-						else
-							if not coopStableSince then
-								coopStableSince = now
-							end
-						end
-
-						local stableAtHome =
-							coopStableSince ~= nil
-							and now - coopStableSince >= 1.50
-
-						local homeConfirmed =
-							rebirthUi.rebirthReady
-							or (
-								not rebirthUi.needsRoosterHome
-								and stableAtHome
-							)
-
-						if homeConfirmed
-							and now - lastRebirthAttemptAt
-								>= AUTOMATION_REBIRTH_RETRY_DELAY then
-
-							local rebirthOk, rebirthResult =
-								rebirthOnce()
-
-							lastRebirthAttemptAt = now
-							rebirthAttemptedAfterReturn = true
-
-							if rebirthOk
-								and rebirthResult ~= false then
-
-								cycleStatus:Set(
-									"Rebirth sent · confirming...",
-									true
-								)
-							else
-								cycleStatus:Set(
-									"Rebirth retry...",
-									false
-								)
-							end
-						end
-
-						if rebirthAttemptedAfterReturn
-							and runtimeRequirementBefore
-							and requiredFloor
-							and requiredFloor
-								~= runtimeRequirementBefore then
-
-							markRebirthComplete(now)
-							runtimeRequirementBefore = nil
-						end
-					end
-
-				-- -------------------------------------------------
-				-- IN TOWER — fallback dynamic rule:
+				-- IN TOWER — fully dynamic:
 				-- A = requiredFloor (changes per Rebirth)
 				-- B = currentFloor
-				-- Only used when Tower Best has NOT yet confirmed
-				-- full Rebirth eligibility.
+				-- B <= A : continue fighting
+				-- B >  A : surrender AND call rooster to Coop
 				-- -------------------------------------------------
-				elseif not rebirthRuntimeCoolingDown
+				if not rebirthRuntimeCoolingDown
 					and requiredFloor
 					and currentFloor
 					and currentFloor > requiredFloor then
 
+					-- Enter Rebirth-return state immediately.
+					-- Do not depend on TowerSurrender's return value.
 					if not waitingForRebirth then
 						waitingForRebirth = true
 
@@ -7911,6 +7114,10 @@ window.AutomationController = (function()
 						lastDynamicSurrenderAt = 0
 					end
 
+					-- Keep requesting surrender + Coop return until
+					-- current Tower floor disappears. This uses the
+					-- exact TowerSurrender RemoteFunction supplied:
+					-- TowerSurrender:InvokeServer()
 					if now - lastDynamicSurrenderAt
 						>= AUTOMATION_DYNAMIC_SURRENDER_DELAY then
 
@@ -8015,6 +7222,119 @@ window.AutomationController = (function()
 						true
 					)
 
+				-- -------------------------------------------------
+				-- OUTSIDE TOWER:
+				-- Rebirth eligibility is checked ALWAYS.
+				-- This branch works even if no surrender happened.
+				-- -------------------------------------------------
+				elseif not rebirthRuntimeCoolingDown
+					and not currentFloor
+					and requiredFloor
+					and towerBest
+					and towerBest >= requiredFloor then
+
+					if not waitingForRebirth then
+						waitingForRebirth = true
+
+						rebirthCountBeforeSurrender =
+							rebirthCount
+
+						rebirthRequirementBeforeSurrender =
+							requiredFloor
+
+						runtimeRequirementBefore =
+							requiredFloor
+
+						lastRebirthAttemptAt = 0
+						lastCoopOrderAt = 0
+						coopStableSince = nil
+
+						-- No surrender is required here, therefore
+						-- allow the home-stability timer immediately.
+						surrenderRequestedAt =
+							now - AUTOMATION_SURRENDER_GRACE
+
+						rebirthAttemptedAfterReturn =
+							false
+
+						cycleStatus:Set(
+							"Rebirth runtime eligible "
+								.. tostring(towerBest)
+								.. " / "
+								.. tostring(requiredFloor),
+							true
+						)
+					end
+
+					-- Always keep calling rooster home while eligible.
+					if now - lastCoopOrderAt
+						>= AUTOMATION_COOP_ORDER_DELAY then
+
+						callChickenToCoopOnce()
+						lastCoopOrderAt = now
+					end
+
+					if rebirthUi.needsRoosterHome then
+						coopStableSince = nil
+
+						cycleStatus:Set(
+							"Rebirth ready · rooster not home",
+							false
+						)
+					else
+						if not coopStableSince then
+							coopStableSince = now
+						end
+					end
+
+					local stableAtHome =
+						coopStableSince ~= nil
+						and now - coopStableSince >= 1.50
+
+					local homeConfirmed =
+						rebirthUi.rebirthReady
+						or (
+							not rebirthUi.needsRoosterHome
+							and stableAtHome
+						)
+
+					if homeConfirmed
+						and now - lastRebirthAttemptAt
+							>= AUTOMATION_REBIRTH_RETRY_DELAY then
+
+						local rebirthOk, rebirthResult =
+							rebirthOnce()
+
+						lastRebirthAttemptAt = now
+						rebirthAttemptedAfterReturn = true
+
+						if rebirthOk
+							and rebirthResult ~= false then
+
+							cycleStatus:Set(
+								"Rebirth sent · confirming...",
+								true
+							)
+						else
+							cycleStatus:Set(
+								"Rebirth retry...",
+								false
+							)
+						end
+					end
+
+					-- Fallback success signal:
+					-- Rebirth requirement changed after an attempt.
+					if rebirthAttemptedAfterReturn
+						and runtimeRequirementBefore
+						and requiredFloor
+						and requiredFloor
+							~= runtimeRequirementBefore then
+
+						markRebirthComplete(now)
+						runtimeRequirementBefore = nil
+					end
+
 				else
 					-- Not currently eligible. Do not leave stale
 					-- Rebirth state blocking the normal Tower cycle.
@@ -8080,18 +7400,13 @@ window.AutomationController = (function()
 	end
 
 	markRebirthComplete = function(now)
-		-- A completed Rebirth starts a BRAND NEW Routine cycle.
-		-- Nothing from the previous Tower/Rebirth cycle is allowed
-		-- to carry into the next one.
 		waitingForRebirth = false
 		rebirthCountBeforeSurrender = nil
 		rebirthRequirementBeforeSurrender = nil
 		requiredRebirthFloorCache = nil
-
 		postRebirthHoldUntil = now
 		nextTowerStartAt =
 			now + getAutomationTowerLoopDelay()
-
 		towerWasActive = false
 		lastRebirthAttemptAt = 0
 		lastCoopOrderAt = 0
@@ -8099,35 +7414,16 @@ window.AutomationController = (function()
 		surrenderRequestedAt = 0
 		rebirthAttemptedAfterReturn = false
 		lastDynamicSurrenderAt = 0
-
-		-- Fresh per-floor timeout state for the next Tower run.
 		fightTimeoutFloor = nil
 		fightTimeoutStartedAt = 0
 		lastFightTimeoutSurrenderAt = 0
-
 		fightTimeoutStatus:Set(
-			"Waiting for next Tower",
+			"Waiting for Tower",
 			false
 		)
 
-		-- Rebirth resets the coop, therefore restart all coop workers
-		-- from the beginning of their loops immediately:
-		--   Buy Feeder    -> starts again at ID 1
-		--   Upgrade Feeder-> starts again at ID 1
-		--   Expand Coop   -> starts immediately
-		-- forceRoutineCoreOn() invalidates the previous copies first,
-		-- so exactly one worker per feature remains alive.
-		if automationEnabled then
-			forceRoutineCoreOn()
-		end
-
-		local nextDelay =
-			getAutomationTowerLoopDelay()
-
 		cycleStatus:Set(
-			"REBIRTH COMPLETE · new cycle · Tower in "
-				.. tostring(nextDelay)
-				.. "s",
+			"Rebirth complete · Coop reset · rebuilding",
 			true
 		)
 	end
