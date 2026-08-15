@@ -68,7 +68,7 @@ local EGG_TYPES = {
 }
 
 local AUTO_EGG_DELAY = 0.225
-local APP_VERSION = "v3.0.0"
+local APP_VERSION = "v2.5.7.1"
 
 local THEME_NAMES = {
 	"Monochrome",
@@ -1267,7 +1267,7 @@ function Library:CreateWindow(options)
 		AnchorPoint = Vector2.new(1, 0.5),
 		Position = UDim2.new(1, -10, 0.5, 0),
 		Size = UDim2.fromOffset(42, 24),
-		BackgroundColor3 = Theme.ControlActive,
+		BackgroundColor3 = Theme.ToggleOff,
 		BorderSizePixel = 0,
 		ZIndex = 73,
 		Parent = liveActionSettingButton,
@@ -1294,7 +1294,7 @@ function Library:CreateWindow(options)
 			enabled and Theme.Text or Theme.TextMuted
 
 		local trackColor =
-			enabled and Theme.Accent or Theme.ControlActive
+			enabled and Theme.Accent or Theme.ToggleOff
 
 		local knobPosition =
 			enabled
@@ -2989,7 +2989,7 @@ local window = Library:CreateWindow({
 -- Compact, screen-anchored runtime monitor.
 --========================================================
 
-local function buildLiveActionPanel()
+local LiveAction = (function()
 	local root = create("Frame", {
 		Name = "LiveActionPanel",
 		AnchorPoint = Vector2.new(1, 0),
@@ -3597,90 +3597,11 @@ local function buildLiveActionPanel()
 	end)
 
 	return api
-end
-
-local function makeNoopLiveAction()
-	return {
-		SetAction = function() end,
-		SetFloors = function() end,
-		SetTimeout = function() end,
-		SetLoopDelay = function() end,
-		SetCoopWorkers = function() end,
-		SetAutomation = function() end,
-		SetVisible = function() end,
-	}
-end
-
-local LiveAction = makeNoopLiveAction()
-
-do
-	local ok, result =
-		xpcall(
-			buildLiveActionPanel,
-			function(errorMessage)
-				local message = tostring(errorMessage)
-
-				if debug and debug.traceback then
-					local traceOk, trace =
-						pcall(
-							debug.traceback,
-							message,
-							2
-						)
-
-					if traceOk and trace then
-						message = trace
-					end
-				end
-
-				return message
-			end
-		)
-
-	if ok and type(result) == "table" then
-		LiveAction = result
-
-		window.ScreenGui:SetAttribute(
-			"LiveActionInitOK",
-			true
-		)
-	else
-		-- Optional panel failure must NEVER stop the main GUI.
-		local partial =
-			window.ScreenGui:FindFirstChild(
-				"LiveActionPanel"
-			)
-
-		if partial then
-			partial:Destroy()
-		end
-
-		window.ScreenGui:SetAttribute(
-			"LiveActionInitOK",
-			false
-		)
-
-		window.ScreenGui:SetAttribute(
-			"LiveActionInitError",
-			tostring(result)
-		)
-
-		warn(
-			"[GACF] Live Action init failed; "
-				.. "continuing main GUI: "
-				.. tostring(result)
-		)
-	end
-end
+end)()
 
 --========================================================
 -- APP: TABS
 --========================================================
-
-window.ScreenGui:SetAttribute(
-	"MainTabsConstructionStarted",
-	true
-)
 
 local routineTab = window:AddTab(
 	"Routine",
@@ -3697,10 +3618,6 @@ local utilitiesTab = window:AddTab(
 	""
 )
 
-window.ScreenGui:SetAttribute(
-	"MainTabsConstructionComplete",
-	true
-)
 
 --========================================================
 -- ROUTINE TAB
@@ -7727,170 +7644,25 @@ window.AutomationController = (function()
 					runtimeRequirementBefore =
 						nil
 
-					-- IMPORTANT:
-					-- requiredFloor / towerBest / currentFloor above are
-					-- snapshots from BEFORE the Rebirth completed. Never
-					-- process FORCE REBIRTH using those stale values.
-					task.wait(AUTOMATION_POLL_DELAY)
-					continue
-
 				elseif rebirthCount ~= nil then
 					runtimeLastRebirthCount =
 						rebirthCount
 				end
 
-				local realRebirthEligible =
-					not rebirthRuntimeCoolingDown
-					and requiredFloor ~= nil
-					and towerBest ~= nil
-					and towerBest >= requiredFloor
-
 				-- -------------------------------------------------
-				-- REAL REBIRTH ELIGIBILITY:
-				-- If Tower Best already meets the dynamic Rebirth
-				-- requirement, Routine must FORCE Rebirth immediately.
-				--
-				-- This has higher priority than current floor logic.
-				-- Even if the rooster is still fighting at floor 1..A,
-				-- we stop the tower run, call it home, then Rebirth.
-				-- -------------------------------------------------
-				if realRebirthEligible then
-
-					if not waitingForRebirth then
-						waitingForRebirth = true
-
-						rebirthCountBeforeSurrender =
-							rebirthCount
-
-						rebirthRequirementBeforeSurrender =
-							requiredFloor
-
-						runtimeRequirementBefore =
-							requiredFloor
-
-						lastRebirthAttemptAt = 0
-						lastCoopOrderAt = 0
-						coopStableSince = nil
-						surrenderRequestedAt = now
-						rebirthAttemptedAfterReturn = false
-						lastDynamicSurrenderAt = 0
-
-						cycleStatus:Set(
-							"TowerBest="
-								.. tostring(towerBest)
-								.. " >= A="
-								.. tostring(requiredFloor)
-								.. " · FORCE REBIRTH",
-							true
-						)
-					end
-
-					if currentFloor then
-						if now - lastDynamicSurrenderAt
-							>= AUTOMATION_DYNAMIC_SURRENDER_DELAY then
-
-							AutoTowerController:SurrenderOnce()
-							AutoTowerController:DeclineOnce()
-							callChickenToCoopOnce()
-
-							lastDynamicSurrenderAt = now
-							lastCoopOrderAt = now
-
-							fightTimeoutStatus:Set(
-								"Bypassed · Best >= Req",
-								true
-							)
-
-							cycleStatus:Set(
-								"TowerBest="
-									.. tostring(towerBest)
-									.. " >= A="
-									.. tostring(requiredFloor)
-									.. " · SURRENDER + COOP",
-								true
-							)
-						end
-
-					else
-						if now - lastCoopOrderAt
-							>= AUTOMATION_COOP_ORDER_DELAY then
-
-							callChickenToCoopOnce()
-							lastCoopOrderAt = now
-						end
-
-						if rebirthUi.needsRoosterHome then
-							coopStableSince = nil
-
-							cycleStatus:Set(
-								"Rebirth ready · rooster not home",
-								false
-							)
-						else
-							if not coopStableSince then
-								coopStableSince = now
-							end
-						end
-
-						local stableAtHome =
-							coopStableSince ~= nil
-							and now - coopStableSince >= 1.50
-
-						local homeConfirmed =
-							rebirthUi.rebirthReady
-							or (
-								not rebirthUi.needsRoosterHome
-								and stableAtHome
-							)
-
-						if homeConfirmed
-							and now - lastRebirthAttemptAt
-								>= AUTOMATION_REBIRTH_RETRY_DELAY then
-
-							local rebirthOk, rebirthResult =
-								rebirthOnce()
-
-							lastRebirthAttemptAt = now
-							rebirthAttemptedAfterReturn = true
-
-							if rebirthOk
-								and rebirthResult ~= false then
-
-								cycleStatus:Set(
-									"Rebirth sent · confirming...",
-									true
-								)
-							else
-								cycleStatus:Set(
-									"Rebirth retry...",
-									false
-								)
-							end
-						end
-
-						if rebirthAttemptedAfterReturn
-							and runtimeRequirementBefore
-							and requiredFloor
-							and requiredFloor
-								~= runtimeRequirementBefore then
-
-							markRebirthComplete(now)
-							runtimeRequirementBefore = nil
-						end
-					end
-
-				-- -------------------------------------------------
-				-- IN TOWER — fallback dynamic rule:
+				-- IN TOWER — fully dynamic:
 				-- A = requiredFloor (changes per Rebirth)
 				-- B = currentFloor
-				-- Only used when Tower Best has NOT yet confirmed
-				-- full Rebirth eligibility.
+				-- B <= A : continue fighting
+				-- B >  A : surrender AND call rooster to Coop
 				-- -------------------------------------------------
-				elseif not rebirthRuntimeCoolingDown
+				if not rebirthRuntimeCoolingDown
 					and requiredFloor
 					and currentFloor
 					and currentFloor > requiredFloor then
 
+					-- Enter Rebirth-return state immediately.
+					-- Do not depend on TowerSurrender's return value.
 					if not waitingForRebirth then
 						waitingForRebirth = true
 
@@ -7911,6 +7683,10 @@ window.AutomationController = (function()
 						lastDynamicSurrenderAt = 0
 					end
 
+					-- Keep requesting surrender + Coop return until
+					-- current Tower floor disappears. This uses the
+					-- exact TowerSurrender RemoteFunction supplied:
+					-- TowerSurrender:InvokeServer()
 					if now - lastDynamicSurrenderAt
 						>= AUTOMATION_DYNAMIC_SURRENDER_DELAY then
 
@@ -8015,6 +7791,119 @@ window.AutomationController = (function()
 						true
 					)
 
+				-- -------------------------------------------------
+				-- OUTSIDE TOWER:
+				-- Rebirth eligibility is checked ALWAYS.
+				-- This branch works even if no surrender happened.
+				-- -------------------------------------------------
+				elseif not rebirthRuntimeCoolingDown
+					and not currentFloor
+					and requiredFloor
+					and towerBest
+					and towerBest >= requiredFloor then
+
+					if not waitingForRebirth then
+						waitingForRebirth = true
+
+						rebirthCountBeforeSurrender =
+							rebirthCount
+
+						rebirthRequirementBeforeSurrender =
+							requiredFloor
+
+						runtimeRequirementBefore =
+							requiredFloor
+
+						lastRebirthAttemptAt = 0
+						lastCoopOrderAt = 0
+						coopStableSince = nil
+
+						-- No surrender is required here, therefore
+						-- allow the home-stability timer immediately.
+						surrenderRequestedAt =
+							now - AUTOMATION_SURRENDER_GRACE
+
+						rebirthAttemptedAfterReturn =
+							false
+
+						cycleStatus:Set(
+							"Rebirth runtime eligible "
+								.. tostring(towerBest)
+								.. " / "
+								.. tostring(requiredFloor),
+							true
+						)
+					end
+
+					-- Always keep calling rooster home while eligible.
+					if now - lastCoopOrderAt
+						>= AUTOMATION_COOP_ORDER_DELAY then
+
+						callChickenToCoopOnce()
+						lastCoopOrderAt = now
+					end
+
+					if rebirthUi.needsRoosterHome then
+						coopStableSince = nil
+
+						cycleStatus:Set(
+							"Rebirth ready · rooster not home",
+							false
+						)
+					else
+						if not coopStableSince then
+							coopStableSince = now
+						end
+					end
+
+					local stableAtHome =
+						coopStableSince ~= nil
+						and now - coopStableSince >= 1.50
+
+					local homeConfirmed =
+						rebirthUi.rebirthReady
+						or (
+							not rebirthUi.needsRoosterHome
+							and stableAtHome
+						)
+
+					if homeConfirmed
+						and now - lastRebirthAttemptAt
+							>= AUTOMATION_REBIRTH_RETRY_DELAY then
+
+						local rebirthOk, rebirthResult =
+							rebirthOnce()
+
+						lastRebirthAttemptAt = now
+						rebirthAttemptedAfterReturn = true
+
+						if rebirthOk
+							and rebirthResult ~= false then
+
+							cycleStatus:Set(
+								"Rebirth sent · confirming...",
+								true
+							)
+						else
+							cycleStatus:Set(
+								"Rebirth retry...",
+								false
+							)
+						end
+					end
+
+					-- Fallback success signal:
+					-- Rebirth requirement changed after an attempt.
+					if rebirthAttemptedAfterReturn
+						and runtimeRequirementBefore
+						and requiredFloor
+						and requiredFloor
+							~= runtimeRequirementBefore then
+
+						markRebirthComplete(now)
+						runtimeRequirementBefore = nil
+					end
+
 				else
 					-- Not currently eligible. Do not leave stale
 					-- Rebirth state blocking the normal Tower cycle.
@@ -8080,18 +7969,13 @@ window.AutomationController = (function()
 	end
 
 	markRebirthComplete = function(now)
-		-- A completed Rebirth starts a BRAND NEW Routine cycle.
-		-- Nothing from the previous Tower/Rebirth cycle is allowed
-		-- to carry into the next one.
 		waitingForRebirth = false
 		rebirthCountBeforeSurrender = nil
 		rebirthRequirementBeforeSurrender = nil
 		requiredRebirthFloorCache = nil
-
 		postRebirthHoldUntil = now
 		nextTowerStartAt =
 			now + getAutomationTowerLoopDelay()
-
 		towerWasActive = false
 		lastRebirthAttemptAt = 0
 		lastCoopOrderAt = 0
@@ -8099,35 +7983,16 @@ window.AutomationController = (function()
 		surrenderRequestedAt = 0
 		rebirthAttemptedAfterReturn = false
 		lastDynamicSurrenderAt = 0
-
-		-- Fresh per-floor timeout state for the next Tower run.
 		fightTimeoutFloor = nil
 		fightTimeoutStartedAt = 0
 		lastFightTimeoutSurrenderAt = 0
-
 		fightTimeoutStatus:Set(
-			"Waiting for next Tower",
+			"Waiting for Tower",
 			false
 		)
 
-		-- Rebirth resets the coop, therefore restart all coop workers
-		-- from the beginning of their loops immediately:
-		--   Buy Feeder    -> starts again at ID 1
-		--   Upgrade Feeder-> starts again at ID 1
-		--   Expand Coop   -> starts immediately
-		-- forceRoutineCoreOn() invalidates the previous copies first,
-		-- so exactly one worker per feature remains alive.
-		if automationEnabled then
-			forceRoutineCoreOn()
-		end
-
-		local nextDelay =
-			getAutomationTowerLoopDelay()
-
 		cycleStatus:Set(
-			"REBIRTH COMPLETE · new cycle · Tower in "
-				.. tostring(nextDelay)
-				.. "s",
+			"Rebirth complete · Coop reset · rebuilding",
 			true
 		)
 	end
