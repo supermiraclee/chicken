@@ -68,7 +68,7 @@ local EGG_TYPES = {
 }
 
 local AUTO_EGG_DELAY = 0.225
-local APP_VERSION = "v2.5.7.6-debug"
+local APP_VERSION = "v2.5.7.7"
 
 local THEME_NAMES = {
 	"Monochrome",
@@ -5181,6 +5181,9 @@ local function getArenaLocalOwnershipState(arena)
 		owner = true,
 		ownerid = true,
 		owneruserid = true,
+		towerowner = true,
+		towerownerid = true,
+		towerowneruserid = true,
 		userid = true,
 		playerid = true,
 		playeruserid = true,
@@ -5281,93 +5284,6 @@ local function getArenaLocalOwnershipState(arena)
 	return nil
 end
 
-local towerDebugLastPrintAt = 0
-local TOWER_DEBUG_PRINT_DELAY = 3.0
-
-local function towerDebugPrint(...)
-	print("[GACF DEBUG]", ...)
-end
-
-local function towerDebugDumpText(root)
-	if not root then
-		return
-	end
-
-	for _, object in ipairs(root:GetDescendants()) do
-		if object:IsA("TextLabel")
-			or object:IsA("TextButton")
-			or object:IsA("TextBox") then
-
-			towerDebugPrint(
-				"TEXT",
-				object:GetFullName(),
-				"=>",
-				tostring(object.Text)
-			)
-		end
-	end
-end
-
-local function towerDebugDumpArena(arena, towerSign)
-	towerDebugPrint(
-		"LOCAL PLAYER",
-		"Name=" .. tostring(player.Name),
-		"DisplayName=" .. tostring(player.DisplayName),
-		"UserId=" .. tostring(player.UserId)
-	)
-
-	if arena then
-		towerDebugPrint(
-			"ARENA",
-			arena:GetFullName()
-		)
-
-		for key, value in pairs(arena:GetAttributes()) do
-			towerDebugPrint(
-				"ARENA ATTR",
-				tostring(key),
-				"=",
-				tostring(value)
-			)
-		end
-
-		for _, object in ipairs(arena:GetChildren()) do
-			if object:IsA("StringValue")
-				or object:IsA("IntValue")
-				or object:IsA("NumberValue")
-				or object:IsA("BoolValue")
-				or object:IsA("ObjectValue") then
-
-				local valueText = "nil"
-
-				pcall(function()
-					valueText =
-						tostring(object.Value)
-				end)
-
-				towerDebugPrint(
-					"ARENA VALUE",
-					object.Name,
-					object.ClassName,
-					"=",
-					valueText
-				)
-			end
-		end
-	end
-
-	if towerSign then
-		towerDebugPrint(
-			"TOWERSIGN",
-			towerSign:GetFullName(),
-			"Class=" .. tostring(towerSign.ClassName),
-			"Enabled=" .. tostring(towerSign.Enabled)
-		)
-
-		towerDebugDumpText(towerSign)
-	end
-end
-
 local function getTowerSignLocalOwnershipState(towerSign)
 	if not towerSign then
 		return nil
@@ -5397,8 +5313,8 @@ local function getTowerSignLocalOwnershipState(towerSign)
 			local lowered =
 				string.lower(plainText)
 
-			-- TowerSign's player line is visibly rendered as @username.
-			-- If we can read an explicit @username, it is authoritative.
+			-- TowerSign's @username text is the rival name in this game.
+			-- This helper is no longer used as an ownership source.
 			local username =
 				lowered:match("@([%w_]+)")
 
@@ -5412,13 +5328,57 @@ local function getTowerSignLocalOwnershipState(towerSign)
 		end
 	end
 
-	-- If TowerSign explicitly names a username and none matched us,
-	-- this sign belongs to another player.
+	-- This result refers only to visible rival text, not arena ownership.
 	if sawExplicitUsername then
 		return false
 	end
 
 	-- No explicit username was readable.
+	return nil
+end
+
+local function floorFromLocalOwnedArenaAttributes()
+	local arenas =
+		workspace:FindFirstChild("Arenas")
+
+	if not arenas then
+		return nil
+	end
+
+	local localUserId =
+		tonumber(player.UserId)
+
+	for _, arena in ipairs(arenas:GetChildren()) do
+		if arena:IsA("Model") then
+			local towerOwner =
+				tonumber(
+					arena:GetAttribute("TowerOwner")
+				)
+
+			local towerActive =
+				arena:GetAttribute("TowerActive")
+
+			local towerFloor =
+				validateTowerFloorCandidate(
+					arena:GetAttribute("TowerFloor")
+				)
+
+			-- Debug proved these are the authoritative runtime fields:
+			-- TowerOwner = LocalPlayer.UserId
+			-- TowerActive = true
+			-- TowerFloor = current live Tower floor
+			if towerOwner == localUserId
+				and towerActive == true
+				and towerFloor then
+
+				return towerFloor,
+					"Local Arena "
+						.. tostring(arena.Name)
+						.. " · TowerOwner"
+			end
+		end
+	end
+
 	return nil
 end
 
@@ -5461,54 +5421,19 @@ local function floorFromWorkspaceTowerSign()
 							)
 
 						if floor then
-							-- Strongest ownership signal:
-							-- TowerSign itself renders @username.
-							local signOwnership =
-								getTowerSignLocalOwnershipState(
-									towerSign
-								)
-
+							-- The @username inside TowerSign is the RIVAL,
+							-- not the Tower owner. Ownership must come from
+							-- Arena metadata such as TowerOwner.
 							local arenaOwnership =
 								getArenaLocalOwnershipState(
 									arena
 								)
 
-							if os.clock() - towerDebugLastPrintAt
-								>= TOWER_DEBUG_PRINT_DELAY then
-
-								towerDebugDumpArena(
-									arena,
-									towerSign
-								)
-
-								towerDebugPrint(
-									"CANDIDATE",
-									"Arena=" .. tostring(arena.Name),
-									"Floor=" .. tostring(floor),
-									"SignOwnership=" .. tostring(signOwnership),
-									"ArenaOwnership=" .. tostring(arenaOwnership)
-								)
-							end
-
-							local ownership =
-								signOwnership
-
-							if ownership == nil then
-								ownership = arenaOwnership
-							end
-
-							-- An explicit TowerSign username mismatch must
-							-- never be overridden by generic Arena metadata.
-							if signOwnership == false then
-								ownership = false
-							end
-
-							if ownership ~= false then
+							if arenaOwnership ~= false then
 								table.insert(candidates, {
 									floor = floor,
 									arena = arena.Name,
-									owned = ownership == true,
-									signOwned = signOwnership == true,
+									owned = arenaOwnership == true,
 								})
 							end
 						end
@@ -5519,30 +5444,12 @@ local function floorFromWorkspaceTowerSign()
 	end
 
 	if #candidates == 0 then
-		if os.clock() - towerDebugLastPrintAt
-			>= TOWER_DEBUG_PRINT_DELAY then
-
-			towerDebugPrint(
-				"TowerSign result = NO CANDIDATES"
-			)
-
-			towerDebugLastPrintAt = os.clock()
-		end
-
 		return nil
 	end
 
-	local signOwnedCandidates = {}
 	local ownedCandidates = {}
 
 	for _, candidate in ipairs(candidates) do
-		if candidate.signOwned then
-			table.insert(
-				signOwnedCandidates,
-				candidate
-			)
-		end
-
 		if candidate.owned then
 			table.insert(
 				ownedCandidates,
@@ -5551,21 +5458,7 @@ local function floorFromWorkspaceTowerSign()
 		end
 	end
 
-	-- Highest confidence: TowerSign itself says @LocalPlayer.
-	if #signOwnedCandidates == 1 then
-		local best = signOwnedCandidates[1]
-
-		return best.floor,
-			"TowerSign "
-				.. tostring(best.arena)
-				.. " · @LocalPlayer"
-	end
-
-	if #signOwnedCandidates > 1 then
-		return nil
-	end
-
-	-- Next best: Arena ownership metadata proves LocalPlayer.
+	-- Arena ownership metadata proves LocalPlayer.
 	if #ownedCandidates == 1 then
 		local best = ownedCandidates[1]
 
@@ -5588,19 +5481,6 @@ local function floorFromWorkspaceTowerSign()
 
 		return best.floor,
 			"TowerSign " .. tostring(best.arena)
-	end
-
-	if os.clock() - towerDebugLastPrintAt
-		>= TOWER_DEBUG_PRINT_DELAY then
-
-		towerDebugPrint(
-			"TowerSign result = AMBIGUOUS",
-			"Candidates=" .. tostring(#candidates),
-			"Owned=" .. tostring(#ownedCandidates),
-			"SignOwned=" .. tostring(#signOwnedCandidates)
-		)
-
-		towerDebugLastPrintAt = os.clock()
 	end
 
 	-- Multiple unowned/unknown TowerSigns: never guess.
@@ -5857,28 +5737,24 @@ local function floorFromExecutorRuntimeTables()
 end
 
 local function getCurrentTowerFloor()
-	local shouldDebug =
-		os.clock() - towerDebugLastPrintAt
-			>= TOWER_DEBUG_PRINT_DELAY
-
-	-- TowerSign.show(p1, p2, p3) proves p2 is the current floor.
-	-- Ownership priority: visible @username -> Arena metadata -> single unambiguous sign.
+	-- Highest confidence, proven by runtime debug:
+	-- Arena.TowerOwner == LocalPlayer.UserId
+	-- Arena.TowerActive == true
+	-- Arena.TowerFloor == current live floor.
 	local floor, source =
+		floorFromLocalOwnedArenaAttributes()
+
+	if floor then
+		lastCurrentTowerFloorSource = source
+		return floor
+	end
+
+	-- TowerSign remains only a fallback.
+	floor, source =
 		floorFromWorkspaceTowerSign()
 
 	if floor then
 		lastCurrentTowerFloorSource = source
-
-		if shouldDebug then
-			towerDebugPrint(
-				"FINAL CURRENT FLOOR",
-				tostring(floor),
-				"Source=" .. tostring(source)
-			)
-
-			towerDebugLastPrintAt = os.clock()
-		end
-
 		return floor
 	end
 
@@ -5886,18 +5762,6 @@ local function getCurrentTowerFloor()
 
 	if floor then
 		lastCurrentTowerFloorSource = source
-
-		if shouldDebug then
-			towerDebugPrint(
-				"FINAL CURRENT FLOOR",
-				tostring(floor),
-				"Source=BattleDataService",
-				tostring(source)
-			)
-
-			towerDebugLastPrintAt = os.clock()
-		end
-
 		return floor
 	end
 
@@ -5905,18 +5769,6 @@ local function getCurrentTowerFloor()
 
 	if floor then
 		lastCurrentTowerFloorSource = source
-
-		if shouldDebug then
-			towerDebugPrint(
-				"FINAL CURRENT FLOOR",
-				tostring(floor),
-				"Source=ArenaRuntime",
-				tostring(source)
-			)
-
-			towerDebugLastPrintAt = os.clock()
-		end
-
 		return floor
 	end
 
@@ -5924,18 +5776,6 @@ local function getCurrentTowerFloor()
 
 	if floor then
 		lastCurrentTowerFloorSource = source
-
-		if shouldDebug then
-			towerDebugPrint(
-				"FINAL CURRENT FLOOR",
-				tostring(floor),
-				"Source=ExecutorRuntime",
-				tostring(source)
-			)
-
-			towerDebugLastPrintAt = os.clock()
-		end
-
 		return floor
 	end
 
@@ -5943,17 +5783,6 @@ local function getCurrentTowerFloor()
 
 	if floor then
 		lastCurrentTowerFloorSource = "tower DataService"
-
-		if shouldDebug then
-			towerDebugPrint(
-				"FINAL CURRENT FLOOR",
-				tostring(floor),
-				"Source=tower DataService"
-			)
-
-			towerDebugLastPrintAt = os.clock()
-		end
-
 		return floor
 	end
 
@@ -5961,17 +5790,6 @@ local function getCurrentTowerFloor()
 
 	if floor then
 		lastCurrentTowerFloorSource = "DataController"
-
-		if shouldDebug then
-			towerDebugPrint(
-				"FINAL CURRENT FLOOR",
-				tostring(floor),
-				"Source=DataController"
-			)
-
-			towerDebugLastPrintAt = os.clock()
-		end
-
 		return floor
 	end
 
@@ -5979,17 +5797,6 @@ local function getCurrentTowerFloor()
 
 	if floor then
 		lastCurrentTowerFloorSource = "Player value/attribute"
-
-		if shouldDebug then
-			towerDebugPrint(
-				"FINAL CURRENT FLOOR",
-				tostring(floor),
-				"Source=Player value/attribute"
-			)
-
-			towerDebugLastPrintAt = os.clock()
-		end
-
 		return floor
 	end
 
@@ -6002,16 +5809,6 @@ local function getCurrentTowerFloor()
 			lastCurrentTowerFloorSource =
 				"Character value/attribute"
 
-			if shouldDebug then
-				towerDebugPrint(
-					"FINAL CURRENT FLOOR",
-					tostring(floor),
-					"Source=Character value/attribute"
-				)
-
-				towerDebugLastPrintAt = os.clock()
-			end
-
 			return floor
 		end
 	end
@@ -6020,18 +5817,6 @@ local function getCurrentTowerFloor()
 
 	if floor then
 		lastCurrentTowerFloorSource = source
-
-		if shouldDebug then
-			towerDebugPrint(
-				"FINAL CURRENT FLOOR",
-				tostring(floor),
-				"Source=BattleGui",
-				tostring(source)
-			)
-
-			towerDebugLastPrintAt = os.clock()
-		end
-
 		return floor
 	end
 
@@ -6039,31 +5824,10 @@ local function getCurrentTowerFloor()
 
 	if floor then
 		lastCurrentTowerFloorSource = "Tower GUI"
-
-		if shouldDebug then
-			towerDebugPrint(
-				"FINAL CURRENT FLOOR",
-				tostring(floor),
-				"Source=Tower GUI"
-			)
-
-			towerDebugLastPrintAt = os.clock()
-		end
-
 		return floor
 	end
 
 	lastCurrentTowerFloorSource = nil
-
-	if shouldDebug then
-		towerDebugPrint(
-			"FINAL CURRENT FLOOR = NIL",
-			"all detectors failed"
-		)
-
-		towerDebugLastPrintAt = os.clock()
-	end
-
 	return nil
 end
 
