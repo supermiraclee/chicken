@@ -68,7 +68,7 @@ local EGG_TYPES = {
 }
 
 local AUTO_EGG_DELAY = 0.225
-local APP_VERSION = "v4"
+local APP_VERSION = "v2.5.7.6"
 
 local THEME_NAMES = {
 	"Monochrome",
@@ -5281,6 +5281,60 @@ local function getArenaLocalOwnershipState(arena)
 	return nil
 end
 
+local function getTowerSignLocalOwnershipState(towerSign)
+	if not towerSign then
+		return nil
+	end
+
+	local localName =
+		string.lower(tostring(player.Name or ""))
+
+	if localName == "" then
+		return nil
+	end
+
+	local sawExplicitUsername = false
+
+	for _, object in ipairs(towerSign:GetDescendants()) do
+		if object:IsA("TextLabel")
+			or object:IsA("TextButton")
+			or object:IsA("TextBox") then
+
+			local rawText =
+				tostring(object.Text or "")
+
+			-- Strip basic RichText tags before reading the visible text.
+			local plainText =
+				rawText:gsub("<[^>]->", "")
+
+			local lowered =
+				string.lower(plainText)
+
+			-- TowerSign's player line is visibly rendered as @username.
+			-- If we can read an explicit @username, it is authoritative.
+			local username =
+				lowered:match("@([%w_]+)")
+
+			if username then
+				sawExplicitUsername = true
+
+				if username == localName then
+					return true
+				end
+			end
+		end
+	end
+
+	-- If TowerSign explicitly names a username and none matched us,
+	-- this sign belongs to another player.
+	if sawExplicitUsername then
+		return false
+	end
+
+	-- No explicit username was readable.
+	return nil
+end
+
 local function floorFromWorkspaceTowerSign()
 	local arenas = workspace:FindFirstChild("Arenas")
 
@@ -5320,18 +5374,37 @@ local function floorFromWorkspaceTowerSign()
 							)
 
 						if floor then
-							local ownership =
+							-- Strongest ownership signal:
+							-- TowerSign itself renders @username.
+							local signOwnership =
+								getTowerSignLocalOwnershipState(
+									towerSign
+								)
+
+							local arenaOwnership =
 								getArenaLocalOwnershipState(
 									arena
 								)
 
-							-- Explicit mismatch means this sign belongs
-							-- to another player. Ignore it.
+							local ownership =
+								signOwnership
+
+							if ownership == nil then
+								ownership = arenaOwnership
+							end
+
+							-- An explicit TowerSign username mismatch must
+							-- never be overridden by generic Arena metadata.
+							if signOwnership == false then
+								ownership = false
+							end
+
 							if ownership ~= false then
 								table.insert(candidates, {
 									floor = floor,
 									arena = arena.Name,
 									owned = ownership == true,
+									signOwned = signOwnership == true,
 								})
 							end
 						end
@@ -5345,9 +5418,17 @@ local function floorFromWorkspaceTowerSign()
 		return nil
 	end
 
+	local signOwnedCandidates = {}
 	local ownedCandidates = {}
 
 	for _, candidate in ipairs(candidates) do
+		if candidate.signOwned then
+			table.insert(
+				signOwnedCandidates,
+				candidate
+			)
+		end
+
 		if candidate.owned then
 			table.insert(
 				ownedCandidates,
@@ -5356,7 +5437,21 @@ local function floorFromWorkspaceTowerSign()
 		end
 	end
 
-	-- Best case: exactly one sign is proven to belong to LocalPlayer.
+	-- Highest confidence: TowerSign itself says @LocalPlayer.
+	if #signOwnedCandidates == 1 then
+		local best = signOwnedCandidates[1]
+
+		return best.floor,
+			"TowerSign "
+				.. tostring(best.arena)
+				.. " · @LocalPlayer"
+	end
+
+	if #signOwnedCandidates > 1 then
+		return nil
+	end
+
+	-- Next best: Arena ownership metadata proves LocalPlayer.
 	if #ownedCandidates == 1 then
 		local best = ownedCandidates[1]
 
@@ -5364,7 +5459,6 @@ local function floorFromWorkspaceTowerSign()
 			"TowerSign " .. tostring(best.arena)
 	end
 
-	-- More than one explicitly-owned candidate is ambiguous.
 	if #ownedCandidates > 1 then
 		return nil
 	end
@@ -5637,7 +5731,7 @@ end
 
 local function getCurrentTowerFloor()
 	-- TowerSign.show(p1, p2, p3) proves p2 is the current floor.
-	-- TowerSign is accepted only when Arena ownership is local/unambiguous.
+	-- Ownership priority: visible @username -> Arena metadata -> single unambiguous sign.
 	local floor, source =
 		floorFromWorkspaceTowerSign()
 
@@ -7734,11 +7828,87 @@ window.AutomationController = (function()
 					rebirthAttemptedAfterReturn = false
 				end
 
+
+				-- -------------------------------------------------
+				-- FORCE REBIRTH ELIGIBILITY:
+				-- Tower Best >= Required Rebirth Floor is enough.
+				-- Current Tower Floor is intentionally NOT required.
+				-- -------------------------------------------------
+				local forceRebirthEligible =
+					not rebirthRuntimeCoolingDown
+					and requiredFloor ~= nil
+					and towerBest ~= nil
+					and towerBest >= requiredFloor
+
+				if forceRebirthEligible then
+					if not waitingForRebirth then
+						waitingForRebirth = true
+						rebirthCountBeforeSurrender = rebirthCount
+						rebirthRequirementBeforeSurrender = requiredFloor
+						runtimeRequirementBefore = requiredFloor
+						lastRebirthAttemptAt = 0
+						lastCoopOrderAt = 0
+						coopStableSince = nil
+						surrenderRequestedAt = now
+						rebirthAttemptedAfterReturn = false
+						lastDynamicSurrenderAt = 0
+					end
+
+					-- Always force retreat + return to Coop first.
+					if now - lastDynamicSurrenderAt
+						>= AUTOMATION_DYNAMIC_SURRENDER_DELAY then
+
+						AutoTowerController:SurrenderOnce()
+						AutoTowerController:DeclineOnce()
+						callChickenToCoopOnce()
+
+						lastDynamicSurrenderAt = now
+						lastCoopOrderAt = now
+
+						fightTimeoutStatus:Set(
+							"Bypassed · Best >= Required",
+							true
+						)
+
+						cycleStatus:Set(
+							"FORCE REBIRTH · Best "
+								.. tostring(towerBest)
+								.. " / Req "
+								.. tostring(requiredFloor)
+								.. " · SURRENDER + COOP",
+							true
+						)
+					end
+
+					-- Rebirth immediately; keep retrying until server accepts.
+					if now - lastRebirthAttemptAt
+						>= AUTOMATION_REBIRTH_RETRY_DELAY then
+
+						local rebirthOk, rebirthResult = rebirthOnce()
+
+						lastRebirthAttemptAt = now
+						rebirthAttemptedAfterReturn = true
+
+						if rebirthOk and rebirthResult ~= false then
+							cycleStatus:Set(
+								"FORCE REBIRTH · request sent · confirming...",
+								true
+							)
+						else
+							cycleStatus:Set(
+								"FORCE REBIRTH · retrying...",
+								false
+							)
+						end
+					end
+				end
+
 				-- PRIMARY SIGNAL:
 				-- If the actual clickable REBIRTH button is visible,
 				-- the game is explicitly telling us Rebirth is ready.
 				-- Fire immediately; do not wait for surrender/home timers.
-				if rebirthUi.rebirthReady
+				if not forceRebirthEligible
+					and rebirthUi.rebirthReady
 					and now - lastRebirthAttemptAt
 						>= AUTOMATION_REBIRTH_RETRY_DELAY then
 
@@ -7789,7 +7959,8 @@ window.AutomationController = (function()
 				-- B <= A : continue fighting
 				-- B >  A : surrender AND call rooster to Coop
 				-- -------------------------------------------------
-				if not rebirthRuntimeCoolingDown
+				if not forceRebirthEligible
+					and not rebirthRuntimeCoolingDown
 					and requiredFloor
 					and currentFloor
 					and currentFloor > requiredFloor then
@@ -7857,7 +8028,8 @@ window.AutomationController = (function()
 				-- This lives in the same worker as dynamic surrender,
 				-- so two Routine workers can never race TowerSurrender.
 				-- -------------------------------------------------
-				elseif not rebirthRuntimeCoolingDown
+				elseif not forceRebirthEligible
+					and not rebirthRuntimeCoolingDown
 					and currentFloor
 					and requiredFloor
 					and currentFloor < requiredFloor then
@@ -7911,7 +8083,8 @@ window.AutomationController = (function()
 						end
 					end
 
-				elseif not rebirthRuntimeCoolingDown
+				elseif not forceRebirthEligible
+					and not rebirthRuntimeCoolingDown
 					and currentFloor
 					and requiredFloor
 					and currentFloor == requiredFloor then
@@ -7929,7 +8102,8 @@ window.AutomationController = (function()
 				-- Rebirth eligibility is checked ALWAYS.
 				-- This branch works even if no surrender happened.
 				-- -------------------------------------------------
-				elseif not rebirthRuntimeCoolingDown
+				elseif not forceRebirthEligible
+					and not rebirthRuntimeCoolingDown
 					and not currentFloor
 					and requiredFloor
 					and towerBest
@@ -8223,8 +8397,7 @@ window.AutomationController = (function()
 				-- Tower is blocked ONLY by real dynamic Rebirth data.
 				-- Rebirth UI text/button alone never controls this timer.
 				local realRebirthEligibleOutside =
-					not inTower
-					and requiredFloor ~= nil
+					requiredFloor ~= nil
 					and towerBest ~= nil
 					and towerBest >= requiredFloor
 
