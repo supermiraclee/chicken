@@ -68,7 +68,7 @@ local EGG_TYPES = {
 }
 
 local AUTO_EGG_DELAY = 0.225
-local APP_VERSION = "v2.5.7.3"
+local APP_VERSION = "v2.5.7.4"
 
 local THEME_NAMES = {
 	"Monochrome",
@@ -6847,6 +6847,9 @@ window.AutomationController = (function()
 	local rebirthRequirementBeforeSurrender = nil
 	local nextTowerStartAt = 0
 	local towerWasActive = false
+	local towerLoopCountdownActive = false
+	local towerStartPending = false
+	local towerStartPendingUntil = 0
 	local postRebirthHoldUntil = 0
 	local lastRebirthAttemptAt = 0
 	local lastCoopOrderAt = 0
@@ -8106,6 +8109,9 @@ window.AutomationController = (function()
 		postRebirthHoldUntil = now
 		nextTowerStartAt =
 			now + getAutomationTowerLoopDelay()
+		towerLoopCountdownActive = true
+		towerStartPending = false
+		towerStartPendingUntil = 0
 		towerWasActive = false
 		lastRebirthAttemptAt = 0
 		lastCoopOrderAt = 0
@@ -8142,7 +8148,10 @@ window.AutomationController = (function()
 
 		local now = os.clock()
 		postRebirthHoldUntil = now
-		nextTowerStartAt = now + getAutomationTowerLoopDelay()
+		nextTowerStartAt = 0
+		towerLoopCountdownActive = false
+		towerStartPending = false
+		towerStartPendingUntil = 0
 		waitingForRebirth = false
 		rebirthCountBeforeSurrender = nil
 		rebirthRequirementBeforeSurrender = nil
@@ -8219,24 +8228,44 @@ window.AutomationController = (function()
 					and towerBest ~= nil
 					and towerBest >= requiredFloor
 
-				-- Tower ended/K.O.: start the exact user delay now.
+				local towerLoopDelay =
+					getAutomationTowerLoopDelay()
+
+				-- -------------------------------------------------
+				-- TOWER LOOP DELAY STATE MACHINE
+				--
+				-- IN TOWER:
+				--   No countdown is allowed to run.
+				--   Wait until chicken returns to Coop.
+				--
+				-- AT COOP / OUTSIDE TOWER:
+				--   Arm Tower Loop Delay, then show Tower starts in Xs.
+				--
+				-- This prevents an old/expired timer from immediately
+				-- sending TowerStart while chicken is still fighting.
+				-- -------------------------------------------------
+
+				-- A successful TowerStart may need a short moment before
+				-- Current Tower Floor becomes visible. During that window,
+				-- do not accidentally arm another countdown.
+				if towerStartPending
+					and inTower then
+
+					towerStartPending = false
+					towerStartPendingUntil = 0
+				end
+
 				if towerWasActive
 					and not inTower then
 
 					AutoTowerController:DeclineOnce()
 					callChickenToCoopOnce()
 
+					towerLoopCountdownActive = true
+					towerStartPending = false
+					towerStartPendingUntil = 0
 					nextTowerStartAt =
-						now + getAutomationTowerLoopDelay()
-
-					cycleStatus:Set(
-						"Tower ended · next run in "
-							.. tostring(
-								getAutomationTowerLoopDelay()
-							)
-							.. "s",
-						true
-					)
+						now + towerLoopDelay
 				end
 
 				towerWasActive = inTower
@@ -8244,69 +8273,128 @@ window.AutomationController = (function()
 				if not waitingForRebirth
 					and not realRebirthEligibleOutside then
 
-					local remaining =
-						math.max(
-							0,
-							nextTowerStartAt - now
-						)
+					if inTower then
+						-- Chicken is actively fighting. Freeze/clear any
+						-- previous countdown. A fresh delay starts only
+						-- after Current Tower Floor disappears.
+						towerLoopCountdownActive = false
+						towerStartPending = false
+						towerStartPendingUntil = 0
+						nextTowerStartAt = 0
 
-					if not inTower and remaining > 0 then
 						cycleStatus:Set(
-							"Tower starts in "
-								.. string.format(
-									"%.1f",
-									remaining
-								)
+							"Waiting to Coop · Tower Loop Delay "
+								.. tostring(towerLoopDelay)
 								.. "s",
 							false
 						)
-					end
 
-					-- Timer expired: always attempt TowerStart.
-					if now >= postRebirthHoldUntil
-						and not inTower
-						and now >= nextTowerStartAt then
+					elseif towerStartPending
+						and now < towerStartPendingUntil then
 
-						-- Final check uses ONLY real dynamic data.
-						local latestRequired =
-							detectRequiredRebirthFloor()
+						cycleStatus:Set(
+							"TowerStart sent · waiting for Tower",
+							true
+						)
 
-						local latestTowerBest =
-							getTowerBestFloor()
+					else
+						if towerStartPending
+							and now >= towerStartPendingUntil then
 
-						local becameReallyEligible =
-							latestRequired ~= nil
-							and latestTowerBest ~= nil
-							and latestTowerBest >= latestRequired
+							towerStartPending = false
+							towerStartPendingUntil = 0
+						end
 
-						if not waitingForRebirth
-							and not becameReallyEligible then
-
-							local started =
-								AutoTowerController:StartOnce()
-
+						-- If Routine was enabled while already at Coop,
+						-- or a previous TowerStart never became active,
+						-- start a fresh delay here.
+						if not towerLoopCountdownActive then
+							towerLoopCountdownActive = true
 							nextTowerStartAt =
-								os.clock()
-								+ getAutomationTowerLoopDelay()
+								now + towerLoopDelay
+						end
 
-							if started then
-								cycleStatus:Set(
-									"TowerStart sent",
-									true
-								)
-							else
-								cycleStatus:Set(
-									"TowerStart rejected · retry in "
-										.. tostring(
-											getAutomationTowerLoopDelay()
-										)
-										.. "s",
-									false
-								)
+						local remaining =
+							math.max(
+								0,
+								nextTowerStartAt - now
+							)
+
+						if remaining > 0 then
+							cycleStatus:Set(
+								"Tower starts in "
+									.. string.format(
+										"%.1f",
+										remaining
+									)
+									.. "s",
+								false
+							)
+						end
+
+						-- Countdown is only allowed to expire at Coop /
+						-- outside Tower.
+						if now >= postRebirthHoldUntil
+							and towerLoopCountdownActive
+							and now >= nextTowerStartAt then
+
+							local latestRequired =
+								detectRequiredRebirthFloor()
+
+							local latestTowerBest =
+								getTowerBestFloor()
+
+							local becameReallyEligible =
+								latestRequired ~= nil
+								and latestTowerBest ~= nil
+								and latestTowerBest >= latestRequired
+
+							if not waitingForRebirth
+								and not becameReallyEligible then
+
+								local started =
+									AutoTowerController:StartOnce()
+
+								if started then
+									-- Stop the countdown immediately.
+									-- Give Tower state up to 5 seconds to
+									-- become observable before retry logic.
+									towerLoopCountdownActive = false
+									nextTowerStartAt = 0
+									towerStartPending = true
+									towerStartPendingUntil =
+										os.clock() + 5
+
+									cycleStatus:Set(
+										"TowerStart sent · waiting for Tower",
+										true
+									)
+								else
+									-- Rejected start: remain at Coop and
+									-- retry only after a NEW full delay.
+									towerLoopCountdownActive = true
+									nextTowerStartAt =
+										os.clock()
+										+ towerLoopDelay
+
+									cycleStatus:Set(
+										"TowerStart rejected · retry in "
+											.. tostring(towerLoopDelay)
+											.. "s",
+										false
+									)
+								end
 							end
 						end
 					end
+
 				elseif realRebirthEligibleOutside then
+					-- Rebirth has higher priority than Tower scheduler.
+					towerLoopCountdownActive = false
+					towerStartPending = false
+					towerStartPendingUntil = 0
+					nextTowerStartAt = 0
+
 					cycleStatus:Set(
 						"Rebirth eligible · Tower paused",
 						true
