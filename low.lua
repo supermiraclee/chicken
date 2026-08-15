@@ -68,7 +68,7 @@ local EGG_TYPES = {
 }
 
 local AUTO_EGG_DELAY = 0.225
-local APP_VERSION = "v2.5.7.4"
+local APP_VERSION = "v4"
 
 local THEME_NAMES = {
 	"Monochrome",
