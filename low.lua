@@ -68,7 +68,7 @@ local EGG_TYPES = {
 }
 
 local AUTO_EGG_DELAY = 0.225
-local APP_VERSION = "v2.5.7.1"
+local APP_VERSION = "v4"
 
 local THEME_NAMES = {
 	"Monochrome",
@@ -3839,7 +3839,7 @@ local AUTO_UPGRADE_FEEDER_MIN_ID = 1
 local AUTO_UPGRADE_FEEDER_MAX_ID = 6
 
 local function getAutoUpgradeFeederDelay()
-	-- Routine timing is fixed at 0.10s per feeder ID.
+	-- Routine timing is fixed at 0.10s between feeder IDs.
 	-- Outside Routine, preserve the Auto-tab CPS slider.
 	if window.AutomationRunning then
 		return 0.10
@@ -3893,7 +3893,12 @@ local function startAutoBuyFeederWorker()
 			and token == autoBuyFeederWorkerToken
 			and window.ScreenGui.Parent do
 
-			-- Batch: 1,2,3,4,5,6 together.
+			-- Sequential mode:
+			-- 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> repeat.
+			--
+			-- UpgradeGenerator is a RemoteFunction, so do NOT fire all
+			-- feeder IDs concurrently. Wait for each InvokeServer call
+			-- to finish before moving to the next feeder ID.
 			for feederId = AUTO_UPGRADE_FEEDER_MIN_ID,
 				AUTO_UPGRADE_FEEDER_MAX_ID do
 
@@ -3904,15 +3909,17 @@ local function startAutoBuyFeederWorker()
 					break
 				end
 
-				local id = feederId
+				upgradeFeederOnce(feederId)
 
-				task.spawn(function()
-					upgradeFeederOnce(id)
-				end)
+				-- Routine: fixed 0.10s between feeder IDs.
+				-- Auto tab: delay continues to follow Upgrade CPS.
+				if autoBuyFeederEnabled
+					and token == autoBuyFeederWorkerToken
+					and window.ScreenGui.Parent then
+
+					task.wait(getAutoUpgradeFeederDelay())
+				end
 			end
-
-			-- Routine = 0.10s between complete 1..6 batches.
-			task.wait(getAutoUpgradeFeederDelay())
 		end
 	end)
 end
