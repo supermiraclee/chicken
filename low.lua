@@ -68,7 +68,7 @@ local EGG_TYPES = {
 }
 
 local AUTO_EGG_DELAY = 0.225
-local APP_VERSION = "v2.5.7.7"
+local APP_VERSION = "v2.5.8.0"
 
 local THEME_NAMES = {
 	"Monochrome",
@@ -99,8 +99,9 @@ local Config = {
 	-- Separate keys: existing AutoBuyFeederEnabled belongs to
 	-- the Auto Upgrade Feeder feature for config compatibility.
 	AutoPurchaseFeederEnabled = false,
-	AutoPurchaseFeederTarget = 1, -- legacy / unused
+	AutoPurchaseFeederTarget = 6,
 	AutoExpandCoopEnabled = false,
+	AutoExpandCoopMaxLevel = 5,
 
 	AutoTowerEnabled = false,
 	AutoTowerStartChoice = "Priority FRONTIER",
@@ -200,12 +201,20 @@ local function sanitizeConfig(data)
 		Config.AutoPurchaseFeederTarget = math.clamp(
 			math.floor(data.AutoPurchaseFeederTarget + 0.5),
 			1,
-			10
+			6
 		)
 	end
 
 	if type(data.AutoExpandCoopEnabled) == "boolean" then
 		Config.AutoExpandCoopEnabled = data.AutoExpandCoopEnabled
+	end
+
+	if type(data.AutoExpandCoopMaxLevel) == "number" then
+		Config.AutoExpandCoopMaxLevel = math.clamp(
+			math.floor(data.AutoExpandCoopMaxLevel + 0.5),
+			1,
+			10
+		)
 	end
 
 	if type(data.AutoTowerEnabled) == "boolean" then
@@ -3965,6 +3974,11 @@ local autoBuyFeederToggle = autoBuyFeederSection:AddToggle({
 --========================================================
 
 local autoPurchaseFeederEnabled = Config.AutoPurchaseFeederEnabled
+local autoPurchaseFeederTarget = math.clamp(
+	math.floor(tonumber(Config.AutoPurchaseFeederTarget) or 6),
+	1,
+	6
+)
 local autoPurchaseFeederWorkerToken = 0
 
 -- Feeder IDs inside the Coop.
@@ -4018,12 +4032,20 @@ local function startAutoPurchaseFeederWorker()
 			and token == autoPurchaseFeederWorkerToken
 			and window.ScreenGui.Parent do
 
-			-- Pair mode:
-			-- 1,1 -> 2,2 -> 3,3 -> 4,4 -> 5,5 -> 6,6
-			-- Each pair is sent immediately, then wait 0.10s
-			-- before moving to the next feeder ID.
+			local maxFeederId =
+				math.clamp(
+					math.floor(
+						tonumber(autoPurchaseFeederTarget)
+							or AUTO_PURCHASE_FEEDER_MAX_ID
+					),
+					AUTO_PURCHASE_FEEDER_MIN_ID,
+					AUTO_PURCHASE_FEEDER_MAX_ID
+				)
+
+			-- Pair mode with Max Buy Feeder:
+			-- Max 4 = 1,1 -> 2,2 -> 3,3 -> 4,4 -> repeat.
 			for feederId = AUTO_PURCHASE_FEEDER_MIN_ID,
-				AUTO_PURCHASE_FEEDER_MAX_ID do
+				maxFeederId do
 
 				if not autoPurchaseFeederEnabled
 					or token ~= autoPurchaseFeederWorkerToken
@@ -4058,30 +4080,65 @@ local function startAutoPurchaseFeederWorker()
 	end)
 end
 
-local autoPurchaseFeederSection = autoTab:AddDirectGroup()
+local autoPurchaseFeederSection = autoTab:AddDropdownSection(
+	"Auto Buy Feeder",
+	false
+)
 
-local autoPurchaseFeederToggle = autoPurchaseFeederSection:AddToggle({
-	Title = "Auto Buy Feeder",
-	Default = autoPurchaseFeederEnabled,
+local autoPurchaseFeederMaxDropdown =
+	autoPurchaseFeederSection:AddDropdown({
+		Title = "Max Buy Feeder",
+		Values = {1, 2, 3, 4, 5, 6},
+		Default = autoPurchaseFeederTarget,
 
-	Callback = function(enabled)
-		autoPurchaseFeederEnabled = enabled
-		Config.AutoPurchaseFeederEnabled = enabled
-		queueSaveConfig()
+		Callback = function(value)
+			autoPurchaseFeederTarget =
+				math.clamp(
+					math.floor(tonumber(value) or 6),
+					1,
+					6
+				)
 
-		if enabled then
-			startAutoPurchaseFeederWorker()
-		else
-			invalidateAutoPurchaseFeederWorker()
-		end
-	end,
-})
+			Config.AutoPurchaseFeederTarget =
+				autoPurchaseFeederTarget
+
+			queueSaveConfig()
+
+			-- Apply the new max immediately, restarting from feeder 1.
+			if autoPurchaseFeederEnabled then
+				startAutoPurchaseFeederWorker()
+			end
+		end,
+	})
+
+local autoPurchaseFeederToggle =
+	autoPurchaseFeederSection:AddToggle({
+		Title = "Auto Buy",
+		Default = autoPurchaseFeederEnabled,
+
+		Callback = function(enabled)
+			autoPurchaseFeederEnabled = enabled
+			Config.AutoPurchaseFeederEnabled = enabled
+			queueSaveConfig()
+
+			if enabled then
+				startAutoPurchaseFeederWorker()
+			else
+				invalidateAutoPurchaseFeederWorker()
+			end
+		end,
+	})
 
 --========================================================
 -- AUTO EXPAND COOP
 --========================================================
 
 local autoExpandCoopEnabled = Config.AutoExpandCoopEnabled
+local autoExpandCoopMaxLevel = math.clamp(
+	math.floor(tonumber(Config.AutoExpandCoopMaxLevel) or 5),
+	1,
+	10
+)
 local autoExpandCoopWorkerToken = 0
 local AUTO_EXPAND_COOP_DELAY = 0.10
 
@@ -4117,34 +4174,356 @@ local function startAutoExpandCoopWorker()
 	end
 
 	task.spawn(function()
+		local dataClient = nil
+		local knownLevel = nil
+		local nextLevelDetectAt = 0
+
+		local function validCoopLevel(value)
+			local level = tonumber(value)
+
+			if not level then
+				return nil
+			end
+
+			level = math.floor(level + 0.5)
+
+			if level < 1 or level > 100 then
+				return nil
+			end
+
+			return level
+		end
+
+		local function levelFromCoopTable(value, depth, visited)
+			if type(value) ~= "table" then
+				return nil
+			end
+
+			depth = depth or 0
+
+			if depth > 4 then
+				return nil
+			end
+
+			visited = visited or {}
+
+			if visited[value] then
+				return nil
+			end
+
+			visited[value] = true
+
+			for key, child in pairs(value) do
+				local normalized =
+					string.lower(
+						tostring(key):gsub("[^%w]", "")
+					)
+
+				if normalized == "level"
+					or normalized == "lvl"
+					or normalized == "cooplevel"
+					or normalized == "cooplvl"
+					or normalized == "expansion"
+					or normalized == "expansionlevel"
+					or normalized == "upgradelevel" then
+
+					local level =
+						validCoopLevel(child)
+
+					if level then
+						return level
+					end
+				end
+			end
+
+			for _, child in pairs(value) do
+				if type(child) == "table" then
+					local level =
+						levelFromCoopTable(
+							child,
+							depth + 1,
+							visited
+						)
+
+					if level then
+						return level
+					end
+				end
+			end
+
+			return nil
+		end
+
+		local function levelFromDataService()
+			if dataClient == nil then
+				local packages =
+					ReplicatedStorage:FindFirstChild(
+						"Packages"
+					)
+
+				local moduleScript =
+					packages
+						and packages:FindFirstChild(
+							"DataService"
+						)
+
+				if moduleScript
+					and moduleScript:IsA("ModuleScript") then
+
+					local ok, service =
+						pcall(require, moduleScript)
+
+					if ok
+						and type(service) == "table"
+						and type(service.client) == "table" then
+
+						dataClient = service.client
+					else
+						dataClient = false
+					end
+				else
+					dataClient = false
+				end
+			end
+
+			if type(dataClient) ~= "table"
+				or type(dataClient.get) ~= "function" then
+
+				return nil
+			end
+
+			-- Prefer direct Coop paths before recursive table parsing.
+			for _, path in ipairs({
+				{"coop", "level"},
+				{"coop", "lvl"},
+				{"coopLevel"},
+				{"coop"},
+				{"progression", "coop"},
+			}) do
+				local ok, state =
+					pcall(function()
+						return dataClient:get(path)
+					end)
+
+				if ok then
+					local level =
+						validCoopLevel(state)
+							or levelFromCoopTable(state)
+
+					if level then
+						return level
+					end
+				end
+			end
+
+			return nil
+		end
+
+		local function worldPositionOfGui(object)
+			local current = object
+
+			while current do
+				if current:IsA("BillboardGui") then
+					local adornee = current.Adornee
+
+					if adornee then
+						if adornee:IsA("Attachment") then
+							return adornee.WorldPosition
+						elseif adornee:IsA("BasePart") then
+							return adornee.Position
+						end
+					end
+				elseif current:IsA("BasePart") then
+					return current.Position
+				end
+
+				current = current.Parent
+			end
+
+			return nil
+		end
+
+		local function levelFromWorkspaceCoopLabel()
+			local character = player.Character
+			local root =
+				character
+					and character:FindFirstChild(
+						"HumanoidRootPart"
+					)
+
+			local bestLevel = nil
+			local bestDistance = math.huge
+
+			for _, object in ipairs(workspace:GetDescendants()) do
+				if object:IsA("TextLabel")
+					or object:IsA("TextButton") then
+
+					local content =
+						tostring(object.Text or "")
+
+					local upper =
+						string.upper(content)
+
+					if string.find(
+						upper,
+						"COOP",
+						1,
+						true
+					) then
+
+						-- Supports labels such as:
+						-- COOP NV.4 / COOP LV.4 / COOP LEVEL 4.
+						local level =
+							validCoopLevel(
+								content:match(
+									"[Cc][Oo][Oo][Pp].-(%d+)"
+								)
+							)
+
+						if level then
+							local position =
+								worldPositionOfGui(
+									object
+								)
+
+							local distance = 0
+
+							if root and position then
+								distance =
+									(root.Position - position).Magnitude
+							elseif root then
+								distance = math.huge
+							end
+
+							if distance < bestDistance then
+								bestDistance = distance
+								bestLevel = level
+							end
+						end
+					end
+				end
+			end
+
+			return bestLevel
+		end
+
+		local function detectCurrentCoopLevel()
+			return levelFromDataService()
+				or levelFromWorkspaceCoopLabel()
+		end
+
 		while autoExpandCoopEnabled
 			and token == autoExpandCoopWorkerToken
 			and window.ScreenGui.Parent do
 
-			expandCoopOnce()
-			task.wait(AUTO_EXPAND_COOP_DELAY)
+			local now = os.clock()
+
+			-- Re-detect periodically so a Rebirth/reset from Level 5
+			-- back to Level 1 automatically starts upgrading again.
+			if now >= nextLevelDetectAt then
+				local detected =
+					detectCurrentCoopLevel()
+
+				if detected then
+					knownLevel = detected
+				end
+
+				nextLevelDetectAt = now + 0.25
+			end
+
+			local maxLevel =
+				math.clamp(
+					math.floor(
+						tonumber(autoExpandCoopMaxLevel)
+							or 5
+					),
+					1,
+					10
+				)
+
+			if knownLevel ~= nil
+				and knownLevel >= maxLevel then
+
+				-- Target reached. Keep worker alive only to observe a
+				-- future Coop reset after Rebirth.
+				task.wait(0.25)
+
+			else
+				local success, result =
+					expandCoopOnce()
+
+				if success and result ~= false then
+					-- If server returns a numeric/new-state value, use it.
+					local resultLevel =
+						validCoopLevel(result)
+							or levelFromCoopTable(result)
+
+					if resultLevel then
+						knownLevel = resultLevel
+					elseif knownLevel then
+						knownLevel += 1
+					else
+						-- Fallback assumption when initial replicated
+						-- level is unavailable. Next detector pass will
+						-- correct it if the world/DataService exposes it.
+						knownLevel = 2
+					end
+				end
+
+				task.wait(AUTO_EXPAND_COOP_DELAY)
+			end
 		end
 	end)
 end
 
-local autoExpandCoopSection = autoTab:AddDirectGroup()
+local autoExpandCoopSection = autoTab:AddDropdownSection(
+	"Auto Expand Coop",
+	false
+)
 
-local autoExpandCoopToggle = autoExpandCoopSection:AddToggle({
-	Title = "Auto Expand Coop",
-	Default = autoExpandCoopEnabled,
+local autoExpandCoopMaxDropdown =
+	autoExpandCoopSection:AddDropdown({
+		Title = "Max Level",
+		Values = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10},
+		Default = autoExpandCoopMaxLevel,
 
-	Callback = function(enabled)
-		autoExpandCoopEnabled = enabled
-		Config.AutoExpandCoopEnabled = enabled
-		queueSaveConfig()
+		Callback = function(value)
+			autoExpandCoopMaxLevel =
+				math.clamp(
+					math.floor(tonumber(value) or 5),
+					1,
+					10
+				)
 
-		if enabled then
-			startAutoExpandCoopWorker()
-		else
-			invalidateAutoExpandCoopWorker()
-		end
-	end,
-})
+			Config.AutoExpandCoopMaxLevel =
+				autoExpandCoopMaxLevel
+
+			queueSaveConfig()
+
+			-- Re-read the live Coop level immediately.
+			if autoExpandCoopEnabled then
+				startAutoExpandCoopWorker()
+			end
+		end,
+	})
+
+local autoExpandCoopToggle =
+	autoExpandCoopSection:AddToggle({
+		Title = "Auto Expand",
+		Default = autoExpandCoopEnabled,
+
+		Callback = function(enabled)
+			autoExpandCoopEnabled = enabled
+			Config.AutoExpandCoopEnabled = enabled
+			queueSaveConfig()
+
+			if enabled then
+				startAutoExpandCoopWorker()
+			else
+				invalidateAutoExpandCoopWorker()
+			end
+		end,
+	})
 
 local AutoTowerController = (function()
 --========================================================
@@ -7669,7 +8048,7 @@ window.AutomationController = (function()
 		-- Each start function invalidates any older copy first,
 		-- guaranteeing exactly one live worker per feature.
 
-		-- Auto Buy Feeder: 1 -> 6 -> 1 -> 6 forever.
+		-- Auto Buy Feeder: 1 -> configured Max Buy Feeder forever.
 		autoPurchaseFeederEnabled = true
 		Config.AutoPurchaseFeederEnabled = true
 		autoPurchaseFeederToggle:Set(true, false)
@@ -7681,7 +8060,7 @@ window.AutomationController = (function()
 		autoBuyFeederToggle:Set(true, false)
 		startAutoBuyFeederWorker()
 
-		-- Auto Expand Coop: InvokeServer forever while Routine is ON.
+		-- Auto Expand Coop: stop at configured Max Level; resume after Coop reset.
 		autoExpandCoopEnabled = true
 		Config.AutoExpandCoopEnabled = true
 		autoExpandCoopToggle:Set(true, false)
