@@ -1,3 +1,666 @@
+--========================================================
+-- GACF PASSIVE DIAGNOSTIC LAYER v4.2 SAFE-MERGE
+-- IMPORTANT:
+--   * The automation script below is appended UNMODIFIED.
+--   * This layer does not block/suppress/spoof Kick/remotes.
+--   * Console = compact.
+--   * Full log = GACF_ALL_AUTO_Diagnostic_v4_2.log
+--========================================================
+
+do
+	local Players_D = game:GetService("Players")
+	local ReplicatedStorage_D = game:GetService("ReplicatedStorage")
+	local GuiService_D = game:GetService("GuiService")
+	local LogService_D = game:GetService("LogService")
+	local ScriptContext_D = game:GetService("ScriptContext")
+
+	local LocalPlayer_D = Players_D.LocalPlayer
+
+	local CFG_D = {
+		FILE = "GACF_ALL_AUTO_Diagnostic_v4_2.log",
+		MAX_LINES = 4000,
+		FLUSH_INTERVAL = 0.35,
+		SUMMARY_INTERVAL = 10,
+		RATE_WINDOW = 1.0,
+		RATE_ALERT = 30,
+		MAX_ARG_STRING = 220,
+		MAX_TABLE_ITEMS = 12,
+		MAX_DEPTH = 2,
+	}
+
+	local State_D = {
+		started = os.clock(),
+		lines = {},
+		connections = {},
+		inbound = {},
+		totals = {},
+		lastSummary = {},
+		rates = {},
+	}
+
+	local function elapsed_D()
+		return string.format("%8.3f", os.clock() - State_D.started)
+	end
+
+	local function fullName_D(obj)
+		if typeof(obj) ~= "Instance" then
+			return tostring(obj)
+		end
+
+		local ok, value = pcall(function()
+			return obj:GetFullName()
+		end)
+
+		return ok and value or tostring(obj)
+	end
+
+	local function trim_D(value)
+		value = tostring(value)
+
+		if #value > CFG_D.MAX_ARG_STRING then
+			return value:sub(1, CFG_D.MAX_ARG_STRING) .. "...<truncated>"
+		end
+
+		return value
+	end
+
+	local function summarize_D(value, depth, seen)
+		depth = depth or 0
+		seen = seen or {}
+
+		local kind = typeof(value)
+
+		if kind == "nil"
+			or kind == "number"
+			or kind == "boolean" then
+			return tostring(value)
+		end
+
+		if kind == "string" then
+			return string.format("%q", trim_D(value))
+		end
+
+		if kind == "Instance" then
+			return "<" .. value.ClassName .. ":" .. fullName_D(value) .. ">"
+		end
+
+		if kind == "Vector3"
+			or kind == "Vector2"
+			or kind == "CFrame"
+			or kind == "Color3"
+			or kind == "UDim"
+			or kind == "UDim2"
+			or kind == "EnumItem" then
+			return tostring(value)
+		end
+
+		if kind == "table" then
+			if seen[value] then
+				return "<recursive>"
+			end
+
+			if depth >= CFG_D.MAX_DEPTH then
+				return "<table>"
+			end
+
+			seen[value] = true
+
+			local out = {}
+			local count = 0
+
+			for key, child in pairs(value) do
+				count += 1
+
+				if count > CFG_D.MAX_TABLE_ITEMS then
+					table.insert(out, "...")
+					break
+				end
+
+				table.insert(
+					out,
+					"["
+						.. summarize_D(key, depth + 1, seen)
+						.. "]="
+						.. summarize_D(child, depth + 1, seen)
+				)
+			end
+
+			seen[value] = nil
+			return "{" .. table.concat(out, ", ") .. "}"
+		end
+
+		return "<" .. kind .. ":" .. trim_D(value) .. ">"
+	end
+
+	local function args_D(...)
+		local packed = table.pack(...)
+		local parts = {}
+
+		for i = 1, packed.n do
+			table.insert(
+				parts,
+				"arg" .. tostring(i) .. "=" .. summarize_D(packed[i])
+			)
+		end
+
+		return table.concat(parts, " | ")
+	end
+
+	local function caller_D()
+		if type(getcallingscript) ~= "function" then
+			return "unavailable"
+		end
+
+		local ok, result = pcall(getcallingscript)
+
+		if not ok then
+			return "error"
+		end
+
+		return result and fullName_D(result) or "nil/executor"
+	end
+
+	local function append_D(category, message)
+		local line =
+			"[" .. elapsed_D() .. "] "
+			.. "[" .. tostring(category) .. "] "
+			.. tostring(message)
+
+		table.insert(State_D.lines, line)
+
+		while #State_D.lines > CFG_D.MAX_LINES do
+			table.remove(State_D.lines, 1)
+		end
+	end
+
+	local function console_D(tag, message)
+		print(
+			string.format(
+				"[GACF-DIAG] %-10s | %s",
+				tostring(tag),
+				tostring(message)
+			)
+		)
+	end
+
+	local function flush_D()
+		if type(writefile) ~= "function" then
+			return
+		end
+
+		pcall(function()
+			writefile(
+				CFG_D.FILE,
+				table.concat(State_D.lines, "\n")
+			)
+		end)
+	end
+
+	local function track_D(connection)
+		if connection then
+			table.insert(State_D.connections, connection)
+		end
+
+		return connection
+	end
+
+	local function suspicious_D(text)
+		text = string.lower(tostring(text or ""))
+
+		for _, keyword in ipairs({
+			"bac",
+			"267",
+			"kick",
+			"disconnect",
+			"detect",
+			"violation",
+			"security",
+			"exploit",
+			"cheat",
+		}) do
+			if string.find(text, keyword, 1, true) then
+				return true
+			end
+		end
+
+		return false
+	end
+
+	local function snapshot_D(reason)
+		append_D("SNAPSHOT", "reason=" .. tostring(reason))
+
+		local character = LocalPlayer_D.Character
+		local humanoid =
+			character
+				and character:FindFirstChildOfClass("Humanoid")
+		local root =
+			character
+				and character:FindFirstChild("HumanoidRootPart")
+
+		if humanoid then
+			append_D(
+				"SNAP_HUM",
+				"health=" .. tostring(humanoid.Health)
+					.. " walkSpeed=" .. tostring(humanoid.WalkSpeed)
+					.. " jumpPower=" .. tostring(humanoid.JumpPower)
+					.. " state=" .. tostring(humanoid:GetState())
+			)
+		end
+
+		if root then
+			append_D(
+				"SNAP_ROOT",
+				"position=" .. tostring(root.Position)
+					.. " velocity=" .. tostring(root.AssemblyLinearVelocity)
+			)
+		end
+
+		flush_D()
+	end
+
+	local function countRemote_D(direction, remote)
+		local key =
+			tostring(direction)
+				.. ":"
+				.. tostring(remote.Name)
+
+		State_D.totals[key] =
+			(State_D.totals[key] or 0) + 1
+
+		local now = os.clock()
+		local rate = State_D.rates[key]
+
+		if not rate then
+			rate = {
+				started = now,
+				count = 0,
+			}
+
+			State_D.rates[key] = rate
+		end
+
+		rate.count += 1
+
+		local elapsed = now - rate.started
+
+		if elapsed >= CFG_D.RATE_WINDOW then
+			if rate.count >= CFG_D.RATE_ALERT then
+				append_D(
+					"RATE",
+					key
+						.. "="
+						.. tostring(rate.count)
+						.. " in "
+						.. string.format("%.2f", elapsed)
+						.. "s"
+				)
+
+				console_D(
+					"RATE",
+					key .. "=" .. tostring(rate.count)
+				)
+			end
+
+			rate.started = now
+			rate.count = 0
+		end
+	end
+
+	local function installNamecall_D()
+		if type(hookmetamethod) ~= "function"
+			or type(newcclosure) ~= "function"
+			or type(getnamecallmethod) ~= "function" then
+
+			append_D("INIT", "outgoing remote logger unavailable")
+			console_D("WARN", "outgoing hook unavailable")
+			return
+		end
+
+		local oldNamecall_D
+
+		local ok, original = pcall(function()
+			return hookmetamethod(
+				game,
+				"__namecall",
+				newcclosure(function(self, ...)
+					local method = getnamecallmethod()
+
+					if method == "FireServer"
+						and typeof(self) == "Instance"
+						and (
+							self:IsA("RemoteEvent")
+							or self:IsA("UnreliableRemoteEvent")
+						) then
+
+						countRemote_D("OUT", self)
+
+						local payload = args_D(...)
+
+						append_D(
+							self.Name == "Telemetry"
+								and "TELEMETRY_OUT"
+								or "REMOTE_OUT",
+							"method=FireServer"
+								.. " remote=" .. fullName_D(self)
+								.. " caller=" .. caller_D()
+								.. (payload ~= "" and " | " .. payload or "")
+						)
+
+						if self.Name == "Telemetry"
+							and suspicious_D(payload) then
+
+							console_D(
+								"TELEMETRY",
+								trim_D(payload)
+							)
+						end
+
+					elseif method == "InvokeServer"
+						and typeof(self) == "Instance"
+						and self:IsA("RemoteFunction") then
+
+						countRemote_D("OUT", self)
+
+						append_D(
+							"REMOTE_OUT",
+							"method=InvokeServer"
+								.. " remote=" .. fullName_D(self)
+								.. " caller=" .. caller_D()
+								.. (args_D(...) ~= "" and " | " .. args_D(...) or "")
+						)
+
+					elseif method == "Kick"
+						and self == LocalPlayer_D then
+
+						local payload = args_D(...)
+
+						append_D(
+							"KICK",
+							"caller=" .. caller_D()
+								.. (payload ~= "" and " | " .. payload or "")
+						)
+
+						console_D(
+							"KICK",
+							payload ~= "" and payload or "LocalPlayer:Kick()"
+						)
+
+						snapshot_D("client Kick")
+					end
+
+					-- Critical: original call is always executed with original args,
+					-- and original return value(s) are passed through untouched.
+					return oldNamecall_D(self, ...)
+				end)
+			)
+		end)
+
+		if ok and original then
+			oldNamecall_D = original
+			append_D("INIT", "outgoing __namecall logger installed")
+		else
+			append_D(
+				"INIT",
+				"outgoing hook failed: " .. tostring(original)
+			)
+
+			console_D("WARN", "outgoing hook failed")
+		end
+	end
+
+	local function attachInbound_D(remote)
+		if State_D.inbound[remote] then
+			return
+		end
+
+		if not (
+			remote:IsA("RemoteEvent")
+			or remote:IsA("UnreliableRemoteEvent")
+		) then
+			return
+		end
+
+		State_D.inbound[remote] = true
+
+		local ok, connection = pcall(function()
+			return remote.OnClientEvent:Connect(function(...)
+				countRemote_D("IN", remote)
+
+				local payload = args_D(...)
+
+				append_D(
+					"REMOTE_IN",
+					"remote="
+						.. fullName_D(remote)
+						.. (payload ~= "" and " | " .. payload or "")
+				)
+
+				if suspicious_D(payload) then
+					console_D(
+						"REMOTE-IN",
+						remote.Name .. " | " .. trim_D(payload)
+					)
+				end
+			end)
+		end)
+
+		if ok and connection then
+			track_D(connection)
+		else
+			State_D.inbound[remote] = nil
+		end
+	end
+
+	local function installInbound_D()
+		local folder =
+			ReplicatedStorage_D:FindFirstChild("Remotes")
+
+		if not folder then
+			append_D("INIT", "ReplicatedStorage.Remotes missing")
+			return
+		end
+
+		local count = 0
+
+		for _, object in ipairs(folder:GetDescendants()) do
+			if object:IsA("RemoteEvent")
+				or object:IsA("UnreliableRemoteEvent") then
+
+				attachInbound_D(object)
+				count += 1
+			end
+		end
+
+		track_D(
+			folder.DescendantAdded:Connect(function(object)
+				if object:IsA("RemoteEvent")
+					or object:IsA("UnreliableRemoteEvent") then
+
+					append_D(
+						"REMOTE_ADD",
+						fullName_D(object)
+							.. " "
+							.. object.ClassName
+					)
+
+					attachInbound_D(object)
+				end
+			end)
+		)
+
+		append_D(
+			"INIT",
+			"inbound attached=" .. tostring(count)
+		)
+	end
+
+	local function installErrors_D()
+		local okGui, signal =
+			pcall(function()
+				return GuiService_D.ErrorMessageChanged
+			end)
+
+		if okGui
+			and typeof(signal) == "RBXScriptSignal" then
+
+			track_D(
+				signal:Connect(function(message)
+					append_D(
+						"ROBLOX_ERROR",
+						trim_D(message)
+					)
+
+					console_D(
+						"ERROR",
+						trim_D(message)
+					)
+
+					snapshot_D(
+						"GuiService.ErrorMessageChanged"
+					)
+				end)
+			)
+		end
+
+		track_D(
+			LogService_D.MessageOut:Connect(
+				function(message, messageType)
+					if suspicious_D(message) then
+						append_D(
+							"LOG_ALERT",
+							tostring(messageType)
+								.. " | "
+								.. trim_D(message)
+						)
+
+						console_D(
+							"LOG",
+							trim_D(message)
+						)
+
+						snapshot_D("LogService alert")
+					end
+				end
+			)
+		)
+
+		track_D(
+			ScriptContext_D.Error:Connect(
+				function(message, stackTrace, source)
+					append_D(
+						"SCRIPT_ERROR",
+						"source="
+							.. tostring(source)
+							.. " | message="
+							.. trim_D(message)
+							.. " | stack="
+							.. trim_D(stackTrace)
+					)
+
+					console_D(
+						"LUA-ERROR",
+						trim_D(message)
+					)
+				end
+			)
+		)
+	end
+
+	local function printSummary_D()
+		local rows = {}
+
+		for key, total in pairs(State_D.totals) do
+			local previous =
+				State_D.lastSummary[key] or 0
+
+			local delta = total - previous
+			State_D.lastSummary[key] = total
+
+			if delta > 0 then
+				table.insert(
+					rows,
+					{
+						key = key,
+						count = delta,
+					}
+				)
+			end
+		end
+
+		table.sort(
+			rows,
+			function(a, b)
+				return a.count > b.count
+			end
+		)
+
+		if #rows == 0 then
+			return
+		end
+
+		local top = {}
+
+		for i = 1, math.min(6, #rows) do
+			table.insert(
+				top,
+				rows[i].key
+					.. "="
+					.. tostring(rows[i].count)
+			)
+		end
+
+		console_D(
+			"SUMMARY",
+			table.concat(top, " | ")
+		)
+	end
+
+	append_D(
+		"INIT",
+		"diagnostic=v4.2-safe-merge"
+			.. " player="
+			.. tostring(LocalPlayer_D.Name)
+			.. " userId="
+			.. tostring(LocalPlayer_D.UserId)
+			.. " placeId="
+			.. tostring(game.PlaceId)
+			.. " jobId="
+			.. tostring(game.JobId)
+	)
+
+	installNamecall_D()
+	installInbound_D()
+	installErrors_D()
+
+	task.spawn(function()
+		while task.wait(CFG_D.FLUSH_INTERVAL) do
+			flush_D()
+		end
+	end)
+
+	task.spawn(function()
+		while task.wait(CFG_D.SUMMARY_INTERVAL) do
+			printSummary_D()
+		end
+	end)
+
+	console_D(
+		"READY",
+		"safe-merge diagnostic active"
+	)
+	console_D(
+		"LOGFILE",
+		CFG_D.FILE
+	)
+
+	flush_D()
+end
+
+--========================================================
+-- ORIGINAL AUTOMATION SCRIPT STARTS BELOW.
+-- EXACT BASELINE CONTENT; NO CALLBACK/WORKER PATCHING.
+--========================================================
+
 -- BUILD: v40.1 Routine Automation FIX
 --[[
 	Grow A Chicken Fighter
